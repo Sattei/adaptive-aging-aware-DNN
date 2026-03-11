@@ -1,0 +1,21 @@
+experiments:
+  - name: "aging_prediction_accuracy"
+    description: "Compare GNN-Transformer vs baselines on predicting aging"
+    baselines: ["linear", "mlp", "rf", "pure_gnn"]
+    dataset_sizes: [10000, 50000, 100000]
+    
+  - name: "hotspot_reduction"
+    description: "Measure peak aging reduction"
+    baselines: ["static", "random", "round_robin", "thermal_heuristic", "simulated_annealing"]
+    
+  - name: "lifetime_improvement"
+    description: "Demonstrate time-to-failure extension vs baselines"
+
+nsga2:
+  population_size: 100
+  generations: 200
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  tournament_size: 3
+
+seed: 42

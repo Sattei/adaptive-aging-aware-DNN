@@ -1,0 +1,24 @@
+workloads:
+  - name: "ResNet-50"
+    type: "CNN"
+    base_activity: 0.85
+  - name: "MobileNetV2"
+    type: "CNN"
+    base_activity: 0.65  
+  - name: "EfficientNet-B4"
+    type: "CNN"
+    base_activity: 0.70
+  - name: "BERT-Base"
+    type: "Transformer"
+    base_activity: 0.90
+  - name: "ViT-B-16"
+    type: "Transformer"
+    base_activity: 0.88
+
+scheduling:
+  patterns:
+    - static
+    - alternating
+    - burst
+    - mixed
+  default_pattern: "mixed"

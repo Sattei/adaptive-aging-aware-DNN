@@ -1,0 +1,25 @@
+Traceback (most recent call last):
+  File "C:\Users\kingm\Downloads\researchpaper\aging-aware-dnn-accelerator\run_test_ds.py", line 6, in <module>
+    exec(f.read())
+    ~~~~^^^^^^^^^^
+  File "<string>", line 31, in <module>
+  File "C:\Users\kingm\Downloads\researchpaper\aging-aware-dnn-accelerator\graph\graph_dataset.py", line 57, in __init__
+    super().__init__(root=root, transform=transform)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kingm\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\torch_geometric\data\in_memory_dataset.py", line 81, in __init__
+    super().__init__(root, transform, pre_transform, pre_filter, log,
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                     force_reload)
+                     ^^^^^^^^^^^^^
+  File "C:\Users\kingm\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\torch_geometric\data\dataset.py", line 115, in __init__
+    self._process()
+    ~~~~~~~~~~~~~^^
+  File "C:\Users\kingm\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\torch_geometric\data\dataset.py", line 265, in _process
+    self.process()
+    ~~~~~~~~~~~~^^
+  File "C:\Users\kingm\Downloads\researchpaper\aging-aware-dnn-accelerator\graph\graph_dataset.py", line 158, in process
+    pyg_data = acc_graph.to_pyg(node_features)
+  File "C:\Users\kingm\Downloads\researchpaper\aging-aware-dnn-accelerator\graph\accelerator_graph.py", line 110, in to_pyg
+    assert x.shape[0] == num_nodes, f"x rows must equal num_nodes"
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: x rows must equal num_nodes

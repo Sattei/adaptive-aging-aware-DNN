@@ -1,0 +1,65 @@
+# @package _global_
+# Smoke Test Configuration - Small scale for quick validation
+
+defaults:
+  - accelerator
+  - training
+  - experiments
+
+accelerator:
+  pe_array: [4, 4]
+  pe_rows: 4
+  pe_cols: 4
+  num_mac_clusters: 4
+  num_sram_banks: 4
+  num_noc_routers: 2
+  clock_ghz: 1.0
+  supply_voltage: 0.8
+  mac_energy_pj_per_op: 0.1
+  sram_read_energy_pj: 2.0
+  noc_hop_energy_pj: 0.5
+  ops_per_cycle: 2
+  max_macs_per_cluster: 4096
+
+training:
+  seed: 42
+  num_epochs: 2
+  batch_size: 4
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  patience: 10
+  grad_clip_max_norm: 1.0
+  val_split: 0.1
+  test_split: 0.1
+
+experiments:
+  seed: 42
+  dataset_sizes: [100]
+  accelerator_sizes: [[4, 4]]
+  workloads: [ResNet-50]
+  scheduling_patterns: [static]
+  n_eval_runs: 2
+
+nsga2:
+  population_size: 10
+  n_gen: 5
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+
+ppo:
+  learning_rate: 0.0003
+  clip_epsilon: 0.2
+  entropy_coeff: 0.01
+  value_loss_coeff: 0.5
+  n_steps: 64
+  batch_size: 8
+  n_epochs: 2
+  gamma: 0.99
+  gae_lambda: 0.95
+  total_timesteps: 1000
+
+planning:
+  max_aging_score: 1.0
+  failure_threshold: 0.8
+  budget_strategy: equalized
+  target_lifetime_years: 5.0

@@ -1,0 +1,7 @@
+accelerator:
+  pe_array: [64, 64]         # rows x cols
+  mac_clusters: 64
+  sram_banks: 16
+  noc_routers: 8
+  clock_frequency_ghz: 1.0
+  supply_voltage: 0.8

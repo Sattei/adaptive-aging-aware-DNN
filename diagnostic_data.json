@@ -1,0 +1,378 @@
+{
+  "files": [
+    ".\\audit.py",
+    ".\\AUDIT_REPORT.md",
+    ".\\debug.txt",
+    ".\\debug2.txt",
+    ".\\debug_out.txt",
+    ".\\environment.yaml",
+    ".\\eval_trace.txt",
+    ".\\eval_trace2.txt",
+    ".\\eval_trace3.txt",
+    ".\\eval_trace4.txt",
+    ".\\eval_trace5.txt",
+    ".\\eval_trace6.txt",
+    ".\\eval_trace7.txt",
+    ".\\eval_trace8.txt",
+    ".\\eval_trace_final.txt",
+    ".\\final_error.txt",
+    ".\\graph_err.txt",
+    ".\\model_trace.txt",
+    ".\\pipeline_err.txt",
+    ".\\raw_trace10.txt",
+    ".\\README.md",
+    ".\\repo_dirs.txt",
+    ".\\repo_files.txt",
+    ".\\requirements.txt",
+    ".\\smoke_step1.py",
+    ".\\smoke_step2.py",
+    ".\\temp_out.txt",
+    ".\\test_log.txt",
+    ".\\.pytest_cache\\README.md",
+    ".\\aging_models\\aging_label_generator.py",
+    ".\\aging_models\\hci_model.py",
+    ".\\aging_models\\nbti_model.py",
+    ".\\aging_models\\tddb_model.py",
+    ".\\aging_models\\__init__.py",
+    ".\\configs\\accelerator.yaml",
+    ".\\configs\\experiments.yaml",
+    ".\\configs\\smoke_test.yaml",
+    ".\\configs\\training.yaml",
+    ".\\configs\\workloads.yaml",
+    ".\\evaluation\\performance_metrics.py",
+    ".\\evaluation\\reliability_metrics.py",
+    ".\\evaluation\\statistical_tests.py",
+    ".\\evaluation\\__init__.py",
+    ".\\experiments\\ablation_studies.py",
+    ".\\experiments\\baseline_experiments.py",
+    ".\\experiments\\__init__.py",
+    ".\\features\\activity_extractor.py",
+    ".\\features\\feature_builder.py",
+    ".\\features\\__init__.py",
+    ".\\graph\\accelerator_graph.py",
+    ".\\graph\\graph_dataset.py",
+    ".\\graph\\__init__.py",
+    ".\\models\\hybrid_gnn_transformer.py",
+    ".\\models\\training_pipeline.py",
+    ".\\models\\trajectory_predictor.py",
+    ".\\models\\__init__.py",
+    ".\\optimization\\chromosome_representation.py",
+    ".\\optimization\\nsga2_optimizer.py",
+    ".\\optimization\\__init__.py",
+    ".\\planning\\lifetime_planner.py",
+    ".\\planning\\__init__.py",
+    ".\\rl\\environment.py",
+    ".\\rl\\policy_network.py",
+    ".\\rl\\trainer.py",
+    ".\\rl\\__init__.py",
+    ".\\scheduler\\runtime_mapper.py",
+    ".\\scheduler\\__init__.py",
+    ".\\scripts\\run_full_pipeline.py",
+    ".\\simulator\\timeloop_runner.py",
+    ".\\simulator\\workload_runner.py",
+    ".\\simulator\\__init__.py",
+    ".\\tests\\test_accelerator_graph.py",
+    ".\\tests\\test_aging_models.py",
+    ".\\tests\\test_dataset.py",
+    ".\\tests\\test_full_pipeline.py",
+    ".\\tests\\test_hybrid_model.py",
+    ".\\tests\\test_nsga2.py",
+    ".\\tests\\test_rl_env.py",
+    ".\\tests\\test_simulator.py",
+    ".\\tests\\test_statistical_tests.py",
+    ".\\tests\\test_trajectory_predictor.py",
+    ".\\tests\\__init__.py",
+    ".\\visualization\\aging_heatmap.py",
+    ".\\visualization\\architecture_diagrams.py",
+    ".\\visualization\\pareto_plots.py",
+    ".\\visualization\\trajectory_plots.py",
+    ".\\visualization\\__init__.py"
+  ],
+  "stubs": {
+    ".\\audit.py": {
+      "lines": 104,
+      "has_stubs": true
+    },
+    ".\\smoke_step1.py": {
+      "lines": 23,
+      "has_stubs": false
+    },
+    ".\\smoke_step2.py": {
+      "lines": 27,
+      "has_stubs": true
+    },
+    ".\\aging_models\\aging_label_generator.py": {
+      "lines": 81,
+      "has_stubs": false
+    },
+    ".\\aging_models\\hci_model.py": {
+      "lines": 26,
+      "has_stubs": false
+    },
+    ".\\aging_models\\nbti_model.py": {
+      "lines": 50,
+      "has_stubs": false
+    },
+    ".\\aging_models\\tddb_model.py": {
+      "lines": 55,
+      "has_stubs": false
+    },
+    ".\\aging_models\\__init__.py": {
+      "lines": 7,
+      "has_stubs": false
+    },
+    ".\\evaluation\\performance_metrics.py": {
+      "lines": 18,
+      "has_stubs": false
+    },
+    ".\\evaluation\\reliability_metrics.py": {
+      "lines": 56,
+      "has_stubs": false
+    },
+    ".\\evaluation\\statistical_tests.py": {
+      "lines": 73,
+      "has_stubs": false
+    },
+    ".\\evaluation\\__init__.py": {
+      "lines": 6,
+      "has_stubs": false
+    },
+    ".\\experiments\\ablation_studies.py": {
+      "lines": 25,
+      "has_stubs": false
+    },
+    ".\\experiments\\baseline_experiments.py": {
+      "lines": 35,
+      "has_stubs": false
+    },
+    ".\\experiments\\__init__.py": {
+      "lines": 5,
+      "has_stubs": false
+    },
+    ".\\features\\activity_extractor.py": {
+      "lines": 56,
+      "has_stubs": false
+    },
+    ".\\features\\feature_builder.py": {
+      "lines": 66,
+      "has_stubs": false
+    },
+    ".\\features\\__init__.py": {
+      "lines": 5,
+      "has_stubs": false
+    },
+    ".\\graph\\accelerator_graph.py": {
+      "lines": 142,
+      "has_stubs": true
+    },
+    ".\\graph\\graph_dataset.py": {
+      "lines": 92,
+      "has_stubs": true
+    },
+    ".\\graph\\__init__.py": {
+      "lines": 5,
+      "has_stubs": false
+    },
+    ".\\models\\hybrid_gnn_transformer.py": {
+      "lines": 135,
+      "has_stubs": true
+    },
+    ".\\models\\training_pipeline.py": {
+      "lines": 165,
+      "has_stubs": false
+    },
+    ".\\models\\trajectory_predictor.py": {
+      "lines": 81,
+      "has_stubs": true
+    },
+    ".\\models\\__init__.py": {
+      "lines": 6,
+      "has_stubs": false
+    },
+    ".\\optimization\\chromosome_representation.py": {
+      "lines": 46,
+      "has_stubs": false
+    },
+    ".\\optimization\\nsga2_optimizer.py": {
+      "lines": 157,
+      "has_stubs": false
+    },
+    ".\\optimization\\__init__.py": {
+      "lines": 5,
+      "has_stubs": false
+    },
+    ".\\planning\\lifetime_planner.py": {
+      "lines": 149,
+      "has_stubs": false
+    },
+    ".\\planning\\__init__.py": {
+      "lines": 4,
+      "has_stubs": false
+    },
+    ".\\rl\\environment.py": {
+      "lines": 159,
+      "has_stubs": true
+    },
+    ".\\rl\\policy_network.py": {
+      "lines": 76,
+      "has_stubs": false
+    },
+    ".\\rl\\trainer.py": {
+      "lines": 251,
+      "has_stubs": false
+    },
+    ".\\rl\\__init__.py": {
+      "lines": 6,
+      "has_stubs": false
+    },
+    ".\\scheduler\\runtime_mapper.py": {
+      "lines": 27,
+      "has_stubs": false
+    },
+    ".\\scheduler\\__init__.py": {
+      "lines": 4,
+      "has_stubs": false
+    },
+    ".\\scripts\\run_full_pipeline.py": {
+      "lines": 261,
+      "has_stubs": true
+    },
+    ".\\simulator\\timeloop_runner.py": {
+      "lines": 186,
+      "has_stubs": true
+    },
+    ".\\simulator\\workload_runner.py": {
+      "lines": 77,
+      "has_stubs": false
+    },
+    ".\\simulator\\__init__.py": {
+      "lines": 5,
+      "has_stubs": false
+    },
+    ".\\tests\\test_accelerator_graph.py": {
+      "lines": 61,
+      "has_stubs": false
+    },
+    ".\\tests\\test_aging_models.py": {
+      "lines": 59,
+      "has_stubs": false
+    },
+    ".\\tests\\test_dataset.py": {
+      "lines": 48,
+      "has_stubs": false
+    },
+    ".\\tests\\test_full_pipeline.py": {
+      "lines": 29,
+      "has_stubs": false
+    },
+    ".\\tests\\test_hybrid_model.py": {
+      "lines": 45,
+      "has_stubs": false
+    },
+    ".\\tests\\test_nsga2.py": {
+      "lines": 57,
+      "has_stubs": false
+    },
+    ".\\tests\\test_rl_env.py": {
+      "lines": 48,
+      "has_stubs": false
+    },
+    ".\\tests\\test_simulator.py": {
+      "lines": 55,
+      "has_stubs": false
+    },
+    ".\\tests\\test_statistical_tests.py": {
+      "lines": 50,
+      "has_stubs": false
+    },
+    ".\\tests\\test_trajectory_predictor.py": {
+      "lines": 8,
+      "has_stubs": true
+    },
+    ".\\tests\\__init__.py": {
+      "lines": 1,
+      "has_stubs": false
+    },
+    ".\\visualization\\aging_heatmap.py": {
+      "lines": 60,
+      "has_stubs": false
+    },
+    ".\\visualization\\architecture_diagrams.py": {
+      "lines": 39,
+      "has_stubs": false
+    },
+    ".\\visualization\\pareto_plots.py": {
+      "lines": 50,
+      "has_stubs": false
+    },
+    ".\\visualization\\trajectory_plots.py": {
+      "lines": 89,
+      "has_stubs": false
+    },
+    ".\\visualization\\__init__.py": {
+      "lines": 14,
+      "has_stubs": false
+    }
+  },
+  "imports": {
+    "simulator.timeloop_runner": "OK",
+    "simulator.workload_runner": "OK",
+    "features.activity_extractor": "OK",
+    "features.feature_builder": "OK",
+    "aging_models.nbti_model": "OK",
+    "aging_models.hci_model": "OK",
+    "aging_models.tddb_model": "OK",
+    "aging_models.aging_label_generator": "OK",
+    "graph.accelerator_graph": "OK",
+    "graph.graph_dataset": "OK",
+    "models.hybrid_gnn_transformer": "OK",
+    "models.trajectory_predictor": "OK",
+    "models.training_pipeline": "OK",
+    "planning.lifetime_planner": "OK",
+    "optimization.nsga2_optimizer": "OK",
+    "optimization.chromosome_representation": "OK",
+    "rl.environment": "OK",
+    "rl.policy_network": "OK",
+    "rl.trainer": "OK",
+    "scheduler.runtime_mapper": "OK",
+    "evaluation.reliability_metrics": "OK",
+    "evaluation.performance_metrics": "OK",
+    "evaluation.statistical_tests": "OK",
+    "visualization.aging_heatmap": "OK",
+    "visualization.trajectory_plots": "OK",
+    "visualization.pareto_plots": "OK",
+    "visualization.architecture_diagrams": "OK",
+    "experiments.baseline_experiments": "OK",
+    "experiments.ablation_studies": "OK"
+  },
+  "packages": {
+    "torch": "2.10.0+cpu",
+    "torch_geometric": "2.7.0",
+    "pymoo": "0.6.1.6",
+    "gymnasium": "1.2.3",
+    "networkx": "3.6.1",
+    "numpy": "2.4.2",
+    "scipy": "1.17.1",
+    "pandas": "3.0.1",
+    "matplotlib": "3.10.8",
+    "hydra": "ERROR: ValueError",
+    "omegaconf": "2.3.0",
+    "wandb": "0.25.0",
+    "sklearn": "1.8.0",
+    "pytest": "9.0.2"
+  },
+  "inits": {
+    "simulator": true,
+    "features": true,
+    "aging_models": true,
+    "graph": true,
+    "models": true,
+    "planning": true,
+    "optimization": true,
+    "rl": true,
+    "scheduler": true,
+    "evaluation": true,
+    "visualization": true,
+    "experiments": true
+  }
+}
