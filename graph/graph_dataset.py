@@ -199,3 +199,6 @@ class AgingDataset(InMemoryDataset):
         logger.info(
             f"Saved {len(data_list)} samples → {self.processed_paths[0]}"
         )
+
+# Alias for backward compatibility
+AcceleratorGraphDataset = AgingDataset
