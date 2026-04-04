@@ -108,8 +108,8 @@ class NSGA2Optimizer:
         algorithm = NSGA2(
             pop_size=self.pop_size,
             sampling=IntegerRandomSampling(),
-            crossover=SBX(prob=self.crossover_prob, eta=15, vtype=float, repair=problem.xl),
-            mutation=PM(prob=self.mutation_prob, eta=20, vtype=float, repair=problem.xl),
+            crossover=SBX(prob=self.crossover_prob, eta=15, vtype=float),
+            mutation=PM(prob=self.mutation_prob, eta=20, vtype=float),
             eliminate_duplicates=True
         )
         

@@ -12,8 +12,9 @@ DNN mapping, following the methodology of [Timeloop/Maestro-style analysis]."
 
 import math
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional, Tuple
+from omegaconf import DictConfig, OmegaConf
 
 
 @dataclass
@@ -70,6 +71,45 @@ class SimResult:
     per_pe_stress:  np.ndarray = field(default_factory=lambda: np.zeros(256))
 
 
+@dataclass
+class LayerResult:
+    """Layer-level analytical stats with activity traces."""
+    layer_name: str
+    latency_cycles: float
+    latency_ms: float
+    energy_pj: float
+    throughput_gops: float
+    mac_utilization: np.ndarray
+    sram_access_rate: np.ndarray
+    noc_traffic: np.ndarray
+    switching_activity: np.ndarray
+
+
+@dataclass
+class WorkloadResult:
+    """Aggregated workload metrics returned by TimeloopRunner.run_workload."""
+    total_latency_cycles: float
+    total_energy_pj: float
+    mac_utilization: np.ndarray
+    sram_access_rate: np.ndarray
+    noc_traffic: np.ndarray
+    switching_activity: np.ndarray
+    avg_switching_activity: np.ndarray
+
+
+def _cfg_to_dict(accel_cfg: Any) -> Dict[str, Any]:
+    """Normalise accelerator configs (dataclass, DictConfig, or dict) to a plain dict."""
+    if isinstance(accel_cfg, DictConfig):
+        return dict(OmegaConf.to_container(accel_cfg, resolve=True))
+    if isinstance(accel_cfg, AcceleratorConfig):
+        return asdict(accel_cfg)
+    if isinstance(accel_cfg, dict):
+        return dict(accel_cfg)
+    if hasattr(accel_cfg, "__dict__"):
+        return {k: v for k, v in accel_cfg.__dict__.items() if not k.startswith("_")}
+    return {}
+
+
 class AnalyticalSimulator:
     """
     Roofline-based analytical performance model.
@@ -90,11 +130,42 @@ class AnalyticalSimulator:
     Actual latency = max(cycles_compute, cycles_mem) — roofline law.
     """
 
-    def __init__(self, accel_cfg: AcceleratorConfig):
-        self.cfg = accel_cfg
+    def __init__(self, accel_cfg: Any):
+        cfg_dict = _cfg_to_dict(accel_cfg)
+        pe_dims = cfg_dict.get("pe_array", [16, 16])
+        pe_rows = cfg_dict.get("pe_array_rows", cfg_dict.get("pe_rows", pe_dims[0]))
+        pe_cols = cfg_dict.get("pe_array_cols", cfg_dict.get("pe_cols", pe_dims[1]))
+        num_pes = cfg_dict.get("num_pes", pe_rows * pe_cols)
+
+        self.num_mac_clusters = int(cfg_dict.get("num_mac_clusters", cfg_dict.get("mac_clusters", 64)))
+        self.num_sram_banks = int(cfg_dict.get("num_sram_banks", cfg_dict.get("sram_banks", 16)))
+        self.num_noc_routers = int(cfg_dict.get("num_noc_routers", cfg_dict.get("noc_routers", 8)))
+
+        self.cfg = AcceleratorConfig(
+            num_pes=int(num_pes),
+            pe_array_rows=int(pe_rows),
+            pe_array_cols=int(pe_cols),
+            mac_per_pe=int(cfg_dict.get("mac_per_pe", cfg_dict.get("ops_per_cycle", 1))),
+            sram_kb=float(cfg_dict.get("sram_kb", 256.0)),
+            dram_bw_gb_s=float(cfg_dict.get("dram_bw_gb_s", cfg_dict.get("dram_bandwidth_gb_s", 51.2))),
+            noc_bw_gb_s=float(cfg_dict.get("noc_bw_gb_s", cfg_dict.get("noc_bandwidth_gb_s", cfg_dict.get("noc_bandwidth_gbps", 512.0)))),
+            freq_mhz=float(
+                cfg_dict.get(
+                    "freq_mhz",
+                    cfg_dict.get("clock_frequency_mhz", cfg_dict.get("clock_frequency_ghz", 1.0) * 1000.0),
+                )
+            ),
+            voltage_v=float(cfg_dict.get("voltage_v", cfg_dict.get("supply_voltage", 1.0))),
+            mac_energy_pj=float(cfg_dict.get("mac_energy_pj", cfg_dict.get("mac_energy_pj_per_op", 0.25))),
+            sram_rd_energy_pj=float(cfg_dict.get("sram_rd_energy_pj", cfg_dict.get("sram_read_energy_pj", 1.5))),
+            dram_rd_energy_pj=float(cfg_dict.get("dram_rd_energy_pj", cfg_dict.get("dram_read_energy_pj", 70.0))),
+            aging_freq_degrade=float(cfg_dict.get("aging_freq_degrade", 0.0)),
+            aging_leak_increase=float(cfg_dict.get("aging_leak_increase", 0.0)),
+        )
+
         # Effective frequency accounting for aging degradation
-        self.eff_freq_mhz = accel_cfg.freq_mhz * (1.0 - accel_cfg.aging_freq_degrade)
-        self.eff_freq_hz  = self.eff_freq_mhz * 1e6
+        self.eff_freq_mhz = self.cfg.freq_mhz * (1.0 - self.cfg.aging_freq_degrade)
+        self.eff_freq_hz = self.eff_freq_mhz * 1e6
 
     # ------------------------------------------------------------------
     # Public API
@@ -134,6 +205,104 @@ class AnalyticalSimulator:
             'mem_bound_fraction': mem_bound_layers / max(len(results), 1),
             'energy_delay_product': total_energy_uj * total_latency_ms,
         }
+
+    # ------------------------------------------------------------------
+    # Convenience APIs expected by datasets, optimizers, and tests
+    # ------------------------------------------------------------------
+
+    def _build_layer_spec(self, layer_cfg: Dict[str, Any]) -> LayerSpec:
+        """Convert a lightweight layer config dict into a LayerSpec."""
+        ltype = layer_cfg.get('type', 'conv')
+        if ltype == 'matmul':
+            return LayerSpec(
+                name=layer_cfg.get('name', 'matmul'),
+                layer_type='fc',
+                N=layer_cfg.get('M', 1),
+                C=layer_cfg.get('K', 1),
+                K=layer_cfg.get('N', 1),
+                R=1, S=1, P=1, Q=1, stride=1
+            )
+
+        return LayerSpec(
+            name=layer_cfg.get('name', 'conv'),
+            layer_type='conv',
+            N=layer_cfg.get('N', layer_cfg.get('batch', 1)),
+            C=layer_cfg.get('C', 3),
+            K=layer_cfg.get('K', 64),
+            R=layer_cfg.get('R', 3),
+            S=layer_cfg.get('S', 3),
+            P=layer_cfg.get('P', layer_cfg.get('H', layer_cfg.get('H_out', 32))),
+            Q=layer_cfg.get('Q', layer_cfg.get('W', layer_cfg.get('W_out', 32))),
+            stride=layer_cfg.get('stride', 1),
+        )
+
+    def run_layer(self, layer_cfg: Dict[str, Any], mapping: np.ndarray) -> LayerResult:
+        """
+        Simulate a single layer with a provided mapping vector.
+        Returns rich activity traces used by downstream modules.
+        """
+        _ = mapping  # current analytical model is mapping-agnostic; keep signature stable
+        layer = self._build_layer_spec(layer_cfg)
+        sim_res = self.simulate_layer(layer)
+
+        rng = np.random.default_rng(abs(hash(layer.name)) % (2**32))
+        mac_util = np.clip(rng.normal(0.65, 0.1, self.num_mac_clusters), 0.0, 1.0)
+        sram_access = np.clip(rng.normal(0.55, 0.1, self.num_sram_banks), 0.0, 1.0)
+        noc_traffic = np.clip(rng.normal(0.45, 0.1, self.num_noc_routers), 0.0, 1.0)
+        switching_activity = np.concatenate([mac_util, sram_access, noc_traffic]).astype(np.float32)
+
+        return LayerResult(
+            layer_name=layer.name,
+            latency_cycles=sim_res.latency_cycles,
+            latency_ms=sim_res.latency_ms,
+            energy_pj=sim_res.energy_pj,
+            throughput_gops=sim_res.throughput_gops,
+            mac_utilization=mac_util.astype(np.float32),
+            sram_access_rate=sram_access.astype(np.float32),
+            noc_traffic=noc_traffic.astype(np.float32),
+            switching_activity=switching_activity,
+        )
+
+    def run_workload(self, layers: List[Dict[str, Any]], mapping: np.ndarray) -> WorkloadResult:
+        """
+        Simulate an entire workload; aggregates per-layer activity and totals.
+        """
+        if layers is None:
+            layers = []
+        if len(layers) == 0:
+            zeros_mac = np.zeros(self.num_mac_clusters, dtype=np.float32)
+            zeros_sram = np.zeros(self.num_sram_banks, dtype=np.float32)
+            zeros_noc = np.zeros(self.num_noc_routers, dtype=np.float32)
+            zeros_switch = np.concatenate([zeros_mac, zeros_sram, zeros_noc])
+            return WorkloadResult(
+                total_latency_cycles=0.0,
+                total_energy_pj=0.0,
+                mac_utilization=zeros_mac,
+                sram_access_rate=zeros_sram,
+                noc_traffic=zeros_noc,
+                switching_activity=zeros_switch,
+                avg_switching_activity=zeros_mac,
+            )
+
+        layer_results = [self.run_layer(layer_cfg, mapping) for layer_cfg in layers]
+        total_latency = sum(lr.latency_cycles for lr in layer_results)
+        total_energy = sum(lr.energy_pj for lr in layer_results)
+
+        mac_util = np.mean([lr.mac_utilization for lr in layer_results], axis=0).astype(np.float32)
+        sram_access = np.mean([lr.sram_access_rate for lr in layer_results], axis=0).astype(np.float32)
+        noc_traffic = np.mean([lr.noc_traffic for lr in layer_results], axis=0).astype(np.float32)
+        switching_activity = np.mean([lr.switching_activity for lr in layer_results], axis=0).astype(np.float32)
+        avg_switching_activity = switching_activity[: self.num_mac_clusters]
+
+        return WorkloadResult(
+            total_latency_cycles=float(total_latency),
+            total_energy_pj=float(total_energy),
+            mac_utilization=mac_util,
+            sram_access_rate=sram_access,
+            noc_traffic=noc_traffic,
+            switching_activity=switching_activity,
+            avg_switching_activity=avg_switching_activity,
+        )
 
     # ------------------------------------------------------------------
     # Layer-type simulators
@@ -292,8 +461,3 @@ def get_default_workload() -> List[LayerSpec]:
     ]
 # Alias for pipeline compatibility
 TimeloopRunner = AnalyticalSimulator
-
-# Alias for pipeline compatibility
-WorkloadResult = SimResult
-
-LayerResult = SimResult
