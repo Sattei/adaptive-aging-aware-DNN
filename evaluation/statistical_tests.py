@@ -1,7 +1,6 @@
-from typing import Any
 import numpy as np
 import scipy.stats as stats
-from typing import Any,  List, Tuple, Dict
+from typing import Any, Dict, List, Tuple
 import pandas as pd
 
 class StatisticalTests:
