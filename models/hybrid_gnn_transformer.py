@@ -20,19 +20,11 @@ class PositionalEncoding(nn.Module):
         self.register_buffer("pe", pe)
 
     def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
-            x: Tensor, shape [batch_size, seq_len, embedding_dim]
-        """
-        seq_len = x.size(1)
-        return x + self.pe[:seq_len].unsqueeze(0)
+        return x + self.pe[:x.size(1)].unsqueeze(0)
 
 
 class HybridGNNTransformer(nn.Module):
-    """
-    Hybrid Architecture capturing spatial hardware topology (GNN)
-    and temporal/context interactions (Transformer).
-    """
+    """GCN → GAT → Transformer encoder for per-node aging prediction."""
 
     def __init__(
         self,
@@ -75,14 +67,9 @@ class HybridGNNTransformer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=transformer_layers)
 
         self.head = nn.Sequential(
-            nn.Linear(hidden_dim, 128),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
-            nn.Sigmoid(),
+            nn.Linear(hidden_dim, 128), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(128, 64),         nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(64, 1),           nn.Sigmoid(),
         )
 
     def encode_graph(self, x, edge_index, edge_attr=None, batch=None):
@@ -90,15 +77,11 @@ class HybridGNNTransformer(nn.Module):
 
         if "gcn" in self.components:
             for gcn, bn in zip(self.gcn_layers, self.bn_layers):
-                h_new = F.relu(bn(gcn(h, edge_index)))
-                h = h + h_new
+                h = h + F.relu(bn(gcn(h, edge_index)))
 
         if "gat" in self.components:
             try:
-                if edge_attr is not None and edge_attr.shape[0] > 0:
-                    h_gat = self.gat(h, edge_index, edge_attr=edge_attr)
-                else:
-                    h_gat = self.gat(h, edge_index)
+                h_gat = self.gat(h, edge_index, edge_attr=edge_attr) if (edge_attr is not None and edge_attr.shape[0] > 0) else self.gat(h, edge_index)
             except TypeError:
                 h_gat = self.gat(h, edge_index)
             h = self.gat_bn(h_gat) + h
@@ -109,17 +92,11 @@ class HybridGNNTransformer(nn.Module):
                 mask = torch.ones((1, h.size(0)), dtype=torch.bool, device=h.device)
             else:
                 dense_h, mask = to_dense_batch(h, batch)
-
             dense_h = self.pos_encoding(dense_h)
-            transformed = self.transformer(dense_h, src_key_padding_mask=~mask)
-            h = h + transformed[mask]
+            h = h + self.transformer(dense_h, src_key_padding_mask=~mask)[mask]
 
         return h
 
     def forward(self, x, edge_index, edge_attr=None, batch=None):
-        """
-        Forward pass. Returns [N, 1] aging predictions.
-        Compatible with single graphs and PyG Batch objects.
-        """
-        h = self.encode_graph(x, edge_index, edge_attr, batch)
-        return self.head(h)
+        return self.head(self.encode_graph(x, edge_index, edge_attr, batch))
+

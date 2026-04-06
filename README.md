@@ -1,140 +1,145 @@
-# Predictive Lifetime Management for DNN Accelerators  
+# Predictive Lifetime Management for DNN Accelerators
 ### Hybrid GNN-Transformer Spatio-Temporal Aging Prediction
 
 *Mrinal Sharma, Satyam Singh — ECE / AI-ML Specialization*
 
-A research implementation of a **predictive lifetime management framework** for DNN accelerators that combines spatio-temporal graph learning (**Hybrid GNN-Transformer**), multi-objective evolutionary optimization (**NSGA-II**), and reinforcement learning (**PPO**) to predict, prevent, and mitigate transistor aging across the full operational lifetime of hardware accelerators.
+A research framework for **predictive lifetime management** of DNN accelerators combining:
+- **Hybrid GNN-Transformer** — per-node aging prediction with 10-step trajectory forecasting
+- **NSGA-II** — multi-objective workload mapping (peak aging + latency + energy)
+- **PPO** — runtime aging control via reinforcement learning
+
+> **Codebase repository:** [github.com/grizzleyyybear/adaptive-aging-aware-DNN](https://github.com/grizzleyyybear/adaptive-aging-aware-DNN)
+
+---
+
+## Results
+
+*Full evaluation on 40,000 samples across 5 industry workloads.*
+
+![Summary](figures/00_summary.png)
+
+### Aging Predictor vs. Published Baselines
+
+![Predictor vs Baselines](figures/01_predictor_vs_baselines.png)
+
+| Method | R² | MAPE | Task Level | Trajectory |
+|---|---|---|---|---|
+| AaDaM (FFNN) [[4]](#references) | 0.72 | 23.00% | Circuit-path | No |
+| GNN4REL (PNA) [[7]](#references) | 0.89 | 8.66% | Circuit-path | No |
+| STTN-GAT [[3]](#references) *(SoTA)* | 0.981 | 3.96% | Circuit-path | No |
+| **This work (Hybrid GNN-Transformer)** | **0.9982** | **0.21%** | **Component-level** | **Yes (10-step)** |
+
+> Component-level (MAC cluster / SRAM bank / NoC router) aging prediction is a harder task than circuit-path timing delay. Our model achieves **R² = 0.9982**, exceeding the STTN-GAT SoTA (0.981).
+
+### Ablation Study
+
+![Ablation](figures/02_ablation.png)
+
+| Architecture | R² | vs. Previous |
+|---|---|---|
+| GCN only | 0.8712 | — |
+| GCN + GAT | 0.9218 | +5.06% |
+| GCN + GAT + Transformer | 0.9524 | +3.06% |
+| **Full Hybrid (this work)** | **0.9982** | +4.58% |
+
+### 10-Step Trajectory Predictor
+
+| Metric | Value |
+|---|---|
+| R² | 0.7718 |
+| MAE | 0.0717 |
+| RMSE | 0.0825 |
+
+No prior work provides multi-step trajectory forecasting for hardware component aging.
+
+### NSGA-II Multi-Objective Optimizer
+
+![NSGA-II](figures/03_nsga2.png)
+
+| Workload | Pareto Solutions | Peak Aging Reduction | Cache Hits |
+|---|---|---|---|
+| ResNet-50 | 12 | 0.8% | 25 |
+| BERT-Base | 4 | **31.5%** | 117 |
+| MobileNetV2 | 5 | 1.3% | 78 |
+| EfficientNet-B4 | 5 | 1.6% | 152 |
+| ViT-B/16 | 8 | **62.3%** | 26 |
+| **Total** | **34** | — | **398** |
+
+Objectives minimized jointly: `[peak_aging, latency, energy]`
+
+### PPO Runtime Controller
+
+![PPO Reward](figures/04_ppo_reward.png)
+
+| Metric | Value |
+|---|---|
+| First reward | −0.148 |
+| Final reward | +0.445 |
+| **Best reward** | **+0.585** |
+| Mean reward | +0.381 |
 
 ---
 
 ## Research Context
 
-As DNN accelerators operate under sustained workloads, hardware components degrade through transistor aging mechanisms — **NBTI** (Negative Bias Temperature Instability), **HCI** (Hot Carrier Injection), and **TDDB** (Time-Dependent Dielectric Breakdown). Existing solutions apply blanket worst-case timing margins or circuit-path-level aging predictions, leaving two critical gaps unaddressed:
+As DNN accelerators operate under sustained workloads, hardware components degrade through **NBTI**, **HCI**, and **TDDB** transistor aging. Existing approaches apply blanket worst-case timing margins or predict only current-state timing delay at the circuit-path level. Two gaps remain unaddressed:
 
-1. **Component-level granularity** — prior work predicts timing delay on logic paths (picoseconds), not per-node aging at hardware-component level (MAC clusters, SRAM banks, NoC routers)
-2. **Multi-step trajectory forecasting** — no prior work provides proactive 10-step future aging predictions for lifetime management
-
-This work addresses both gaps with a unified framework evaluated on five industry-representative DNN workloads.
-
----
-
-## Results vs. State-of-the-Art
-
-### Aging Predictor (Current State — R²)
-
-| Method | R² | MAPE | Capability |
-|---|---|---|---|
-| FFNN / AaDaM [[4]](#references) | ~0.72 | 23.00% | Circuit-path, no trajectory |
-| PNA-GNN / GNN4REL [[7]](#references) | ~0.89 | 8.66% | Circuit-path, no trajectory |
-| STTN-GAT [[3]](#references) *(SoTA)* | 0.981 | 3.96% | Circuit-path, **no trajectory** |
-| **This work (Hybrid GNN-Transformer)** | **0.9982** | **~0.21%** | **Component-level + trajectory** |
-
-> Our predictor achieves **R² = 0.9982** on the harder per-node hardware-component aging task — exceeding STTN-GAT (R² = 0.981) which operates at the easier circuit-path level and has no trajectory capability.
-
-### Trajectory Predictor (10-Step Forecast)
-
-| Model Variant | R² | MAE | Notes |
-|---|---|---|---|
-| GCN only | 0.8712 | — | Baseline spatial encoder |
-| GCN + GAT | 0.9218 | — | +5.06% with attention |
-| GCN + Transformer | 0.9524 | — | +3.06% with global context |
-| **Full Hybrid (this work)** | **0.7718** | **0.0717** | 10-step trajectory on 40k samples |
-
-> The trajectory task (predicting 10 future aging steps) is significantly harder than single-step prediction. Our implementation achieves R² = 0.7718 on the multi-step forecast — a capability **not available in any prior aging analysis work**.
-
-### NSGA-II Multi-Objective Optimization (40k dataset)
-
-| Workload | Pareto Solutions | Peak Aging Reduction | Cache Hits |
-|---|---|---|---|
-| ResNet-50 | 7 | ~9% | — |
-| BERT-Base | 5 | ~32% | — |
-| MobileNetV2 | 6 | ~12% | — |
-| EfficientNet-B4 | 8 | ~10% | — |
-| ViT-B/16 | **8** | **~76%** | — |
-| **Total** | **34** | — | **398** |
-
-### PPO Runtime Controller
-
-| Metric | Value |
-|---|---|
-| Initial reward | −0.148 |
-| Final reward | +0.445 |
-| **Best reward** | **+0.585** |
-| Mean reward | +0.381 |
-| KL early-stopping | ✓ active |
-| Entropy annealing | ✓ 0.01 → 0.001 |
+1. **Component-level granularity** — prior work predicts logic-path timing delay; we predict per-node aging at the MAC cluster / SRAM bank / NoC router level
+2. **Proactive trajectory forecasting** — no prior system provides 10-step future aging predictions for lifetime management
 
 ---
 
 ## System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                  CONFIGURATION (OmegaConf)               │
-│       configs/ — accelerator · workloads · training      │
-└──────────┬───────────────────┬──────────────────┬────────┘
-           │                   │                  │
-           ▼                   ▼                  ▼
-┌──────────────┐  ┌────────────────────┐  ┌──────────────────┐
-│ AGING MODELS │  │    SIMULATOR       │  │ GRAPH            │
-│  NBTI · HCI  │  │  Roofline model    │  │ AcceleratorGraph │
-│  TDDB        │  │  5 DNN workloads   │  │ 28 nodes (PyG)   │
-└──────┬───────┘  └────────┬───────────┘  └──────┬───────────┘
-       │                   │                     │
-       └───────────────────┴────────┬────────────┘
-                                    ▼
-                        ┌───────────────────────┐
-                        │  Hybrid GNN-Transformer│
-                        │  GCN→GAT→Transformer  │
-                        │  → per-node aging [0,1]│
-                        └──────────┬────────────┘
-                                   │
-              ┌────────────────────┼──────────────────────┐
-              ▼                    ▼                       ▼
-   ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-   │ Trajectory      │  │   NSGA-II        │  │  PPO Controller  │
-   │ Predictor       │  │   3-objective    │  │  5 actions       │
-   │ 10-step forecast│  │   Pareto opt.    │  │  GAE + clipping  │
-   └─────────────────┘  └──────────────────┘  └──────────────────┘
+ACCELERATOR GRAPH (28 nodes: 16 MAC + 8 SRAM + 4 Router)
+          │
+          ▼
+[8-dim node features per workload step]
+          │
+          ▼
+  Hybrid GNN-Transformer
+  ├── GCNConv × 3  (spatial k-hop encoding, residual)
+  ├── GATConv × 1  (4 heads, edge-aware attention)
+  └── TransformerEncoder × 2  (global context, 4 heads)
+          │
+    [256-dim node embeddings]
+          │
+    ┌─────┴──────────────┐
+    ▼                    ▼
+[N, 1] aging score   [N, 10] trajectory forecast
+    │                    │
+    └────────────────────┘
+          │
+    ┌─────┴─────────────────────┐
+    ▼                           ▼
+NSGA-II optimizer           PPO controller
+(peak_aging, latency,       (5 discrete actions:
+ energy tradeoffs)           balance/rotate/plan)
 ```
 
-**Accelerator model:** 28-node heterogeneous graph — 16 MAC clusters, 8 SRAM banks, 4 NoC routers  
-**Node features:** `[switching_act, compute_util, mem_rate, duty_cycle, temp_proxy, node_type, workload_type, stress_time]`  
-**Aging label:** `0.40·norm(ΔNBTI) + 0.35·norm(ΔHCI) + 0.25·F_TDDB`
-
----
-
-## Ablation Study
-
-| Component | R² | Δ vs previous | Insight |
-|---|---|---|---|
-| GCN only | 0.8712 | — | k-hop spatial encoding |
-| + GAT (4 heads) | 0.9218 | +5.06% | Attention weights per edge |
-| + Transformer (2 layers) | 0.9524 | +3.06% | Global context beyond k-hop |
-| **Full model** | **0.9982** | **+3.58%** | Combined spatio-temporal |
+**Aging label:** `0.40·NBTI_norm + 0.35·HCI_norm + 0.25·TDDB_prob`  
+**Trajectory loss:** `Σ_k  0.95^k · MSE(ŷ_k, y_k)`  
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone
 git clone https://github.com/grizzleyyybear/adaptive-aging-aware-DNN
 cd adaptive-aging-aware-DNN
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Smoke test (< 5 min, CPU, 200 samples)
+# Smoke test (~5 min, CPU, 200 samples)
 python run_eval.py --smoke
 
-# Full evaluation (40k samples, ~10 min GPU)
+# Full evaluation (40k samples)
 python run_eval.py --full
 
-# Paper comparison report
-python paper_comparison.py --plot
+# Generate figures from results
+python generate_figures.py
 
-# Run test suite
+# Run tests
 pytest tests/ -q
 ```
 
@@ -145,22 +150,25 @@ pytest tests/ -q
 ```
 adaptive-aging-aware-DNN/
 ├── aging_models/       NBTI, HCI, TDDB physics models
-├── graph/              AcceleratorGraph (NetworkX → PyG), AgingDataset
+├── graph/              AcceleratorGraph (NetworkX -> PyG), AgingDataset
 ├── features/           FeatureBuilder, ActivityExtractor
-├── simulator/          Roofline analytical model, WorkloadRunner
+├── simulator/          Roofline analytical simulator, WorkloadRunner
 ├── models/             HybridGNNTransformer, TrajectoryPredictor, TrainingPipeline
 ├── optimization/       NSGA2Optimizer, MappingChromosome
 ├── rl/                 AgingControlEnv, ActorCritic, PPOTrainer
-├── planning/           LifetimePlanner (budget allocation)
+├── planning/           LifetimePlanner
 ├── evaluation/         PerformanceMetrics, ReliabilityMetrics, StatisticalTests
-├── scheduler/          RuntimeMapper (NSGA-II → execution trace)
+├── scheduler/          RuntimeMapper
 ├── visualization/      Heatmaps, Pareto plots, trajectory charts
 ├── utils/              device.py, runtime_eval.py
-├── scripts/            run_full_pipeline.py, generate_paper_outputs.py
 ├── configs/            accelerator.yaml, training.yaml, experiments.yaml
 ├── tests/              17 passing test cases
-├── run_eval.py         Primary evaluation entry point
-└── paper_comparison.py Literature comparison report
+├── figures/            Generated result plots
+├── checkpoints/        Trained model weights
+├── run_eval.py         Evaluation entry point (--smoke / --full)
+├── generate_figures.py Figure generation from eval_results.json
+├── paper_comparison.py Literature comparison report
+└── eval_results.json   Latest evaluation results
 ```
 
 ---
@@ -171,7 +179,7 @@ adaptive-aging-aware-DNN/
 |---|---|
 | [1] | I. Hill et al., "CMOS Reliability From Past to Future," *IEEE T-DMR*, 2022 |
 | [2] | S. Kim et al., "Reliability Assessment of 3 nm GAA Logic," *IEEE IRPS*, 2023 |
-| [3] | A. Bu et al., "Multi-View Graph Learning for Path-Level Aging-Aware Timing Prediction," *Electronics*, 2024 — **SoTA baseline (STTN-GAT)** |
+| [3] | A. Bu et al., "Multi-View Graph Learning for Path-Level Aging-Aware Timing Prediction," *Electronics*, 2024 — **SoTA baseline** |
 | [4] | S. M. Ebrahimipour et al., "AaDaM: Aging-Aware Cell Delay Model Using FFNN," *ICCAD*, 2020 |
 | [5] | S. Das et al., "Recent Advances in Differential Evolution," *Swarm Evol. Comput.*, 2016 |
 | [6] | N. Ikushima et al., "DE Neural Network Optimization with IDE," *IEEE CEC*, 2021 |

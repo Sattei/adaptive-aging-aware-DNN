@@ -48,15 +48,8 @@ class RolloutBuffer:
 
 
 class PPOTrainer:
-    """
-    PPO with:
-    - Linear LR decay
-    - Value function clipping
-    - Running observation normalization
-    - KL divergence early stopping per epoch
-    - Periodic evaluation with best-checkpoint saving
-    - Entropy coefficient annealing
-    """
+    """PPO with linear LR decay, value clipping, obs normalization,
+    KL early-stopping, entropy annealing, and best-checkpoint saving."""
 
     def __init__(self, env: AgingControlEnv, policy: ActorCritic, config: Any):
         self.env = env
@@ -81,20 +74,13 @@ class PPOTrainer:
             )
         )
 
-        # --- Entropy annealing ---
         self.ent_coef_start = float(_cfg_get(config, "ent_coef", _cfg_get(config, "entropy_coeff", 0.01)))
-        self.ent_coef_end = float(_cfg_get(config, "ent_coef_end", self.ent_coef_start * 0.1))
-        self.ent_coef = self.ent_coef_start
-
-        # --- KL early-stopping ---
-        self.target_kl = float(_cfg_get(config, "target_kl", 0.03))
-
-        # --- Value clipping ---
-        self.clip_range_vf = float(_cfg_get(config, "clip_range_vf", self.clip_range))
-
-        # --- Periodic evaluation ---
-        self.eval_interval = int(_cfg_get(config, "eval_interval", 5))
-        self.eval_episodes = int(_cfg_get(config, "eval_episodes", 5))
+        self.ent_coef_end   = float(_cfg_get(config, "ent_coef_end", self.ent_coef_start * 0.1))
+        self.ent_coef       = self.ent_coef_start
+        self.target_kl      = float(_cfg_get(config, "target_kl", 0.03))
+        self.clip_range_vf  = float(_cfg_get(config, "clip_range_vf", self.clip_range))
+        self.eval_interval  = int(_cfg_get(config, "eval_interval", 5))
+        self.eval_episodes  = int(_cfg_get(config, "eval_episodes", 5))
 
         # --- Observation normalization ---
         obs_shape = (env.observation_space.shape[0],)
@@ -102,13 +88,9 @@ class PPOTrainer:
         self.normalize_obs = bool(_cfg_get(config, "normalize_obs", True))
 
         self.optimizer = optim.Adam(self.policy.parameters(), lr=self.learning_rate, eps=1e-5)
-        # Linear LR decay scheduler
         target_iters = max(int(_cfg_get(config, "n_iterations", self.n_iterations)), 1)
         self.scheduler = optim.lr_scheduler.LinearLR(
-            self.optimizer,
-            start_factor=1.0,
-            end_factor=0.1,
-            total_iters=target_iters,
+            self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=target_iters,
         )
 
         self.device = resolve_device(_cfg_get(config, "device", None))
@@ -160,7 +142,6 @@ class PPOTrainer:
             advantages, returns = self._compute_gae(buffer.rewards, buffer.values, buffer.dones, next_value)
             update_metrics = self._ppo_update(buffer, advantages, returns)
 
-            # Step LR scheduler
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]["lr"]
 
@@ -207,7 +188,6 @@ class PPOTrainer:
                 if eval_reward > self._best_eval_reward:
                     self._best_eval_reward = eval_reward
                     torch.save(self.policy.state_dict(), best_path)
-                    log.info("[PPO] New best policy saved (reward=%.4f)", eval_reward)
 
             if global_step >= total_timesteps:
                 break
@@ -320,7 +300,6 @@ class PPOTrainer:
 
                 new_log_probs, values, entropy = self.policy.evaluate_actions(b_obs, b_actions)
 
-                # --- KL divergence early stopping ---
                 log_ratio = new_log_probs - b_old_log_probs
                 approx_kl = float(((torch.exp(log_ratio) - 1) - log_ratio).mean().item())
                 if approx_kl > 1.5 * self.target_kl:
@@ -332,7 +311,6 @@ class PPOTrainer:
                 surrogate_2 = torch.clamp(ratio, 1.0 - self.clip_range, 1.0 + self.clip_range) * b_advantages
                 policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
 
-                # --- Clipped value loss ---
                 values_clipped = b_old_values + torch.clamp(
                     values - b_old_values, -self.clip_range_vf, self.clip_range_vf
                 )
