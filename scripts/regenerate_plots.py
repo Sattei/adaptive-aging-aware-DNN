@@ -71,30 +71,36 @@ PPO_REWARDS = [
      0.12,  0.18,  0.23,  0.22,  0.31,  0.32,  0.21,  0.29,  0.34,  0.36,
 ]
 
-# Eval table: (workload, initial_aging, nsga_aging, initial_latency, nsga_latency,
-#              initial_energy, nsga_energy, initial_ttf, nsga_ttf)
-EVAL = {
-    "ResNet-50":       dict(init_aging=0.435324, nsga_aging=0.214237,
-                            init_lat=16206848.0, nsga_lat=7376272.0,
-                            init_eng=9.585204e8, nsga_eng=9.604635e8,
-                            init_ttf=0.081109,  nsga_ttf=0.792668),
-    "BERT-Base":       dict(init_aging=0.472681, nsga_aging=0.265129,
-                            init_lat=169869312., nsga_lat=75497672.0,
-                            init_eng=3.519881e9, nsga_eng=3.523687e9,
-                            init_ttf=0.081109,  nsga_ttf=0.285352),
-    "MobileNetV2":     dict(init_aging=0.458472, nsga_aging=0.253518,
-                            init_lat=8304128.0,  nsga_lat=7225544.0,
-                            init_eng=5.587935e8, nsga_eng=5.597354e8,
-                            init_ttf=0.081109,  nsga_ttf=0.285352),
-    "EfficientNet-B4": dict(init_aging=0.469593, nsga_aging=0.260888,
-                            init_lat=52308900.0, nsga_lat=46785800.0,
-                            init_eng=2.452167e9, nsga_eng=2.455994e9,
-                            init_ttf=0.081109,  nsga_ttf=0.285352),
-    "ViT-B/16":        dict(init_aging=0.474772, nsga_aging=0.173718,
-                            init_lat=72585216.0, nsga_lat=29049132.0,
-                            init_eng=2.506849e9, nsga_eng=2.510214e9,
-                            init_ttf=0.081109,  nsga_ttf=0.507302),
-}
+# Eval table: populated at runtime from outputs/nsga_ppo_results.json
+def _build_eval_from_results() -> dict:
+    results_path = REPO_ROOT / "outputs" / "nsga_ppo_results.json"
+    with open(results_path) as f:
+        data = json.load(f)
+    rows = data["evaluation"]  # list of dicts with keys: Workload, Method, Peak Aging, Latency Cycles, Energy (pJ), TTF (Yrs)
+    ev: dict = {}
+    for row in rows:
+        wl     = row["Workload"]
+        method = row["Method"]
+        if wl not in ev:
+            ev[wl] = {}
+        if method == "Initial":
+            ev[wl]["init_aging"] = row["Peak Aging"]
+            ev[wl]["init_lat"]   = row["Latency Cycles"]
+            ev[wl]["init_eng"]   = row["Energy (pJ)"]
+            ev[wl]["init_ttf"]   = row["TTF (Yrs)"]
+        elif method == "NSGA-II":
+            ev[wl]["nsga_aging"] = row["Peak Aging"]
+            ev[wl]["nsga_lat"]   = row["Latency Cycles"]
+            ev[wl]["nsga_eng"]   = row["Energy (pJ)"]
+            ev[wl]["nsga_ttf"]   = row["TTF (Yrs)"]
+        elif method == "PPO":
+            ev[wl]["ppo_aging"]  = row["Peak Aging"]
+            ev[wl]["ppo_lat"]    = row["Latency Cycles"]
+            ev[wl]["ppo_eng"]    = row["Energy (pJ)"]
+            ev[wl]["ppo_ttf"]    = row["TTF (Yrs)"]
+    return ev
+
+EVAL = _build_eval_from_results()
 
 NODES_PER_GRAPH = 28
 EDGES_PER_GRAPH = 92
@@ -221,13 +227,11 @@ def plot_lifetime_improvement(out: list[Path]):
 
     init_ttfs  = np.array([EVAL[w]["init_ttf"] for w in WORKLOADS])
     nsga_ttfs  = np.array([EVAL[w]["nsga_ttf"] for w in WORKLOADS])
+    ppo_ttfs_  = np.array([EVAL[w]["ppo_ttf"]  for w in WORKLOADS])
 
     init_avg = init_ttfs.mean()
     nsga_avg = nsga_ttfs.mean()
-    ppo_avg  = nsga_avg * 0.93   # PPO tracks NSGA-II closely (same latency, slightly higher aging)
-    # Computed from eval table: PPO and NSGA-II have identical latency/TTF in most workloads.
-    # Use NSGA-II avg as PPO avg (conservative — PPO has marginally higher peak aging for some workloads).
-    ppo_avg = nsga_avg  # same TTF as NSGA-II (eval table shows identical TTF for PPO and NSGA-II)
+    ppo_avg  = ppo_ttfs_.mean()
 
     nsga_improvement_pct = (nsga_avg - init_avg) / init_avg * 100.0
     ppo_improvement_pct  = (ppo_avg  - init_avg) / init_avg * 100.0
@@ -299,8 +303,8 @@ def plot_pareto_3d(out: list[Path]):
         # Pareto front solutions
         if wl in pareto_json and pareto_json[wl]:
             sols = pareto_json[wl]
-            lats = [s["latency"] for s in sols]
-            engs = [s["energy"]  for s in sols]
+            lats = [s["latency_cycles"] / 1e8 for s in sols]
+            engs = [s["energy_pj"] / 1e9     for s in sols]
             ages = [s["peak_aging"] for s in sols]
             ax.scatter(lats, engs, ages,
                        marker="o", s=35, color=c, alpha=0.75,
@@ -399,10 +403,9 @@ def plot_lifetime_per_workload(out: list[Path]):
 
     x     = np.arange(len(WORKLOADS))
     w     = 0.30
-    init_ttfs = [EVAL[wl]["init_ttf"] for wl in WORKLOADS]
-    nsga_ttfs = [EVAL[wl]["nsga_ttf"] for wl in WORKLOADS]
-    # PPO has same TTF as NSGA-II in eval table (latency and energy identical)
-    ppo_ttfs  = nsga_ttfs
+    init_ttfs = [EVAL[wl]["init_ttf"]  for wl in WORKLOADS]
+    nsga_ttfs = [EVAL[wl]["nsga_ttf"]  for wl in WORKLOADS]
+    ppo_ttfs  = [EVAL[wl]["ppo_ttf"]   for wl in WORKLOADS]
 
     fig, ax = plt.subplots(figsize=(9, 4))
 
