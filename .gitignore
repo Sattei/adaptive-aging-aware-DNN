@@ -21,6 +21,9 @@ data/processed/*.pt
 # ── Hydra runtime outputs ─────────────────────────────────────────────────────
 outputs/
 
+# ── Generated figures ─────────────────────────────────────────────────────────
+output_figures/
+
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
