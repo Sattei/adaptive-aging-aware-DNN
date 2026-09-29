@@ -4,6 +4,8 @@ model:
   gat_heads: 4
   transformer_heads: 4
   transformer_layers: 2
+  temporal_hidden_dim: 128
+  temporal_gru_layers: 1
   prediction_horizon: 10
 
 training:
