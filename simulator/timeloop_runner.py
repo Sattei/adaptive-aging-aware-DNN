@@ -55,6 +55,10 @@ class AcceleratorConfig:
     noc_bw_gb_s: float = 512.0          # on-chip NoC bandwidth GB/s
     freq_mhz: float = 1000.0            # clock frequency MHz
     voltage_v: float = 1.0              # supply voltage (normalised ref)
+    ambient_temperature_k: float = 318.15 # 45 C ambient/package inlet
+    thermal_package_rth_k_per_w: float = 1.5
+    thermal_local_rth_k_per_w: float = 60.0
+    max_temperature_k: float = 398.15      # 125 C safety cap for proxy
     # Energy constants (pJ per operation)
     mac_energy_pj: float = 0.25         # multiply-accumulate
     sram_rd_energy_pj: float = 1.5      # SRAM read per byte
@@ -103,6 +107,16 @@ class SimResult:
     sram_access_rate: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
     noc_traffic: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
     switching_activity: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
+    # Thermal energy buckets.  Their sum is on-chip energy; DRAM remains part
+    # of energy_pj only and is deliberately not attributed to die nodes.
+    compute_energy_pj: float = 0.0
+    sram_energy_pj: float = 0.0
+    noc_energy_pj: float = 0.0
+    leakage_energy_pj: float = 0.0
+    onchip_energy_pj: float = 0.0
+    avg_power_w: float = 0.0
+    node_power_w: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
+    temperature_k: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
 
     @property
     def total_latency_cycles(self) -> float:
@@ -161,6 +175,10 @@ def normalize_accelerator_config(accel_cfg: Any) -> AcceleratorConfig:
         noc_bw_gb_s=float(_cfg_pick(accel_cfg, ["noc_bw_gb_s", "noc_bandwidth_gbps"], 512.0)),
         freq_mhz=freq_mhz,
         voltage_v=voltage_v,
+        ambient_temperature_k=float(_cfg_get(accel_cfg, "ambient_temperature_k", 318.15)),
+        thermal_package_rth_k_per_w=float(_cfg_get(accel_cfg, "thermal_package_rth_k_per_w", 1.5)),
+        thermal_local_rth_k_per_w=float(_cfg_get(accel_cfg, "thermal_local_rth_k_per_w", 60.0)),
+        max_temperature_k=float(_cfg_get(accel_cfg, "max_temperature_k", 398.15)),
         mac_energy_pj=float(_cfg_pick(accel_cfg, ["mac_energy_pj", "mac_energy_pj_per_op"], 0.25)),
         sram_rd_energy_pj=float(_cfg_pick(accel_cfg, ["sram_rd_energy_pj", "sram_read_energy_pj"], 1.5)),
         dram_rd_energy_pj=float(_cfg_get(accel_cfg, "dram_rd_energy_pj", 70.0)),
@@ -248,6 +266,19 @@ class AnalyticalSimulator:
         total_latency_ms = (total_latency_cycles / self.eff_freq_hz) * 1e3
         total_energy_pj = self._compute_mapping_aware_energy(layer_results, mapping_arr)
         total_energy_uj = total_energy_pj * 1e-6
+        energy_buckets = self._compute_mapping_aware_component_energies(layer_results, mapping_arr)
+        onchip_energy_pj = energy_buckets["onchip"]
+        node_power_w, temperature_k, avg_power_w = self._estimate_thermal_state(
+            energy_buckets["compute"],
+            energy_buckets["sram"],
+            energy_buckets["noc"],
+            energy_buckets["active_leakage"],
+            energy_buckets["idle_leakage"],
+            total_latency_cycles,
+            mac_util,
+            sram_access,
+            noc_traffic,
+        )
         total_dram_bytes = float(sum(r.dram_accesses_bytes for r in layer_results))
         total_throughput = float(sum(r.throughput_gops for r in layer_results))
         mean_utilisation = float(np.mean([r.utilisation for r in layer_results]))
@@ -276,6 +307,14 @@ class AnalyticalSimulator:
             sram_access_rate=sram_access,
             noc_traffic=noc_traffic,
             switching_activity=switching,
+            compute_energy_pj=energy_buckets["compute"],
+            sram_energy_pj=energy_buckets["sram"],
+            noc_energy_pj=energy_buckets["noc"],
+            leakage_energy_pj=energy_buckets["leakage"],
+            onchip_energy_pj=onchip_energy_pj,
+            avg_power_w=avg_power_w,
+            node_power_w=node_power_w,
+            temperature_k=temperature_k,
         )
 
     def aggregate_metrics(self, results: Dict[str, SimResult]) -> Dict:
@@ -347,6 +386,140 @@ class AnalyticalSimulator:
 
         return compute_energy + noc_energy + data_reuse_penalty + active_leakage + idle_leakage + wakeup_energy
 
+    def _compute_mapping_aware_component_energies(
+        self,
+        layer_results: List[SimResult],
+        mapping_arr: np.ndarray,
+    ) -> dict[str, float]:
+        """Return conserved on-chip energy buckets for thermal attribution.
+
+        Layer DRAM energy remains in the system-level ``energy_pj`` metric and
+        is intentionally excluded here.  Mapping transfer and wake-up costs are
+        NoC energy, reuse is SRAM energy, and leakage retains active/idle
+        placement semantics.  The layer leakage term and mapping leakage are
+        distinct terms already present in the workload energy model, so both
+        are included exactly once.
+        """
+        compute_energy = sum(r.compute_energy_pj for r in layer_results)
+        sram_energy = sum(r.sram_energy_pj for r in layer_results)
+        noc_energy = sum(r.noc_energy_pj for r in layer_results)
+        layer_leakage = sum(r.leakage_energy_pj for r in layer_results)
+        transitions = self._collect_intercluster_transfers(layer_results, mapping_arr)
+
+        transfer_noc_energy = sum(
+            t["bytes"] * max(t["hops"], 1) * self.cfg.noc_energy_per_byte_pj
+            for t in transitions
+        )
+        data_reuse_penalty = sum(
+            t["bytes"] * 0.08 * self.cfg.sram_rd_energy_pj
+            * (1.0 + 0.2 * max(t["hops"] - 1, 0))
+            for t in transitions
+        )
+
+        active_clusters = len(set(int(c) for c in mapping_arr))
+        idle_clusters = max(self.cfg.mac_clusters - active_clusters, 0)
+        total_latency = self._compute_mapping_aware_latency(layer_results, mapping_arr)
+        active_leakage = layer_leakage + (
+            active_clusters * self.cfg.idle_leakage_pj_per_cycle * total_latency * 0.35
+        )
+        idle_leakage = idle_clusters * self.cfg.idle_leakage_pj_per_cycle * total_latency
+        wakeup_energy = active_clusters * self.cfg.noc_latency_cycles * 5.0
+
+        sram_energy += data_reuse_penalty
+        noc_energy += transfer_noc_energy + wakeup_energy
+        leakage_energy = active_leakage + idle_leakage
+        onchip_energy = compute_energy + sram_energy + noc_energy + leakage_energy
+        return {
+            "compute": float(compute_energy),
+            "sram": float(sram_energy),
+            "noc": float(noc_energy),
+            "leakage": float(leakage_energy),
+            "active_leakage": float(active_leakage),
+            "idle_leakage": float(idle_leakage),
+            "onchip": float(onchip_energy),
+        }
+
+    def _estimate_thermal_state(
+        self,
+        compute_energy_pj: float,
+        sram_energy_pj: float,
+        noc_energy_pj: float,
+        active_leakage_energy_pj: float,
+        idle_leakage_energy_pj: float,
+        latency_cycles: float,
+        mac_util: np.ndarray,
+        sram_access: np.ndarray,
+        noc_traffic: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, float]:
+        """
+        First-order steady-state compact thermal proxy.
+
+        P_avg = E_onchip / execution_time
+        T_i = T_ambient + R_package * P_avg + R_local * P_i
+
+        Each dynamic energy bucket is allocated only to its physical component
+        type: MAC compute, SRAM accesses, or NoC routers.  Leakage is split
+        between active MAC clusters and idle MAC clusters.  If an energy-positive
+        component has no trace activity, it is shared uniformly within that
+        component type so energy remains conserved.
+        This is not a floorplan/FEM thermal solver; R values must be calibrated
+        for a target package/technology before claiming absolute temperatures.
+        """
+        duration_s = max(float(latency_cycles) / max(self.eff_freq_hz, 1.0), 1e-12)
+        activities = (mac_util, sram_access, noc_traffic)
+        expected_sizes = (self.cfg.mac_clusters, self.cfg.sram_banks, self.cfg.noc_routers)
+        if any(np.asarray(activity).size != expected for activity, expected in zip(activities, expected_sizes)):
+            raise ValueError(
+                "thermal activity vectors must match MAC, SRAM, and NoC node counts"
+            )
+
+        def allocate(power_w: float, activity: np.ndarray) -> np.ndarray:
+            """Conserve one component's power, with a within-type uniform fallback."""
+            values = np.clip(np.asarray(activity, dtype=np.float64), 0.0, None)
+            if power_w <= 0.0:
+                return np.zeros(values.size, dtype=np.float64)
+            activity_sum = float(np.sum(values))
+            if activity_sum <= 0.0:
+                return np.full(values.size, power_w / max(values.size, 1), dtype=np.float64)
+            return power_w * values / activity_sum
+
+        component_powers_w = np.maximum(
+            np.asarray(
+                [
+                    compute_energy_pj,
+                    sram_energy_pj,
+                    noc_energy_pj,
+                    active_leakage_energy_pj,
+                    idle_leakage_energy_pj,
+                ],
+                dtype=np.float64,
+            ),
+            0.0,
+        ) * 1e-12 / duration_s
+        compute_power, sram_power, noc_power, active_leakage_power, idle_leakage_power = component_powers_w
+
+        mac_power = allocate(compute_power, mac_util)
+        mac_power += allocate(active_leakage_power, mac_util)
+        idle_mask = (np.asarray(mac_util, dtype=np.float64) <= 0.0).astype(np.float64)
+        mac_power += allocate(idle_leakage_power, idle_mask)
+        node_power = np.concatenate([
+            mac_power,
+            allocate(sram_power, sram_access),
+            allocate(noc_power, noc_traffic),
+        ])
+        avg_power_w = float(np.sum(component_powers_w))
+        node_power_w = node_power.astype(np.float32)
+
+        shared_rise_k = self.cfg.thermal_package_rth_k_per_w * avg_power_w
+        local_rise_k = self.cfg.thermal_local_rth_k_per_w * node_power_w
+        temperature_k = np.clip(
+            self.cfg.ambient_temperature_k + shared_rise_k + local_rise_k,
+            self.cfg.ambient_temperature_k,
+            self.cfg.max_temperature_k,
+        ).astype(np.float32)
+
+        return node_power_w, temperature_k, float(avg_power_w)
+
     # ------------------------------------------------------------------
     # Layer-type simulators
     # ------------------------------------------------------------------
@@ -409,6 +582,9 @@ class AnalyticalSimulator:
             dram_accesses_bytes=total_bytes,
             compute_intensity=compute_intensity,
             per_pe_stress=per_pe_stress,
+            compute_energy_pj=mac_energy,
+            leakage_energy_pj=leakage_pj,
+            onchip_energy_pj=mac_energy + leakage_pj,
         )
 
     def _simulate_fc(self, layer: LayerSpec) -> SimResult:
@@ -439,6 +615,8 @@ class AnalyticalSimulator:
             dram_accesses_bytes=total_bytes,
             compute_intensity=0.5,
             per_pe_stress=self._compute_pe_stress(0, utilisation),
+            sram_energy_pj=energy_pj,
+            onchip_energy_pj=energy_pj,
         )
 
     # ------------------------------------------------------------------
@@ -553,6 +731,17 @@ class AnalyticalSimulator:
             noc_traffic[router_id] = np.clip(noc_traffic[router_id] + noc_pressure / active_clusters.size, 0.0, 1.0)
 
         switching = np.concatenate([mac_util, sram_access, noc_traffic]).astype(np.float32)
+        node_power_w, temperature_k, avg_power_w = self._estimate_thermal_state(
+            result.compute_energy_pj,
+            result.sram_energy_pj,
+            result.noc_energy_pj,
+            result.leakage_energy_pj,
+            0.0,
+            result.latency_cycles,
+            mac_util,
+            sram_access,
+            noc_traffic,
+        )
 
         return SimResult(
             layer_name=result.layer_name,
@@ -570,6 +759,14 @@ class AnalyticalSimulator:
             sram_access_rate=sram_access,
             noc_traffic=noc_traffic,
             switching_activity=switching,
+            compute_energy_pj=result.compute_energy_pj,
+            sram_energy_pj=result.sram_energy_pj,
+            noc_energy_pj=result.noc_energy_pj,
+            leakage_energy_pj=result.leakage_energy_pj,
+            onchip_energy_pj=result.onchip_energy_pj,
+            avg_power_w=avg_power_w,
+            node_power_w=node_power_w,
+            temperature_k=temperature_k,
         )
 
     def _aggregate_mapping_activity(self, layer_results: List[SimResult], mapping_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -662,6 +859,14 @@ class AnalyticalSimulator:
             sram_access_rate=np.zeros(self.cfg.sram_banks, dtype=np.float32),
             noc_traffic=np.zeros(self.cfg.noc_routers, dtype=np.float32),
             switching_activity=np.zeros(self.cfg.mac_clusters + self.cfg.sram_banks + self.cfg.noc_routers, dtype=np.float32),
+            onchip_energy_pj=0.0,
+            avg_power_w=0.0,
+            node_power_w=np.zeros(self.cfg.mac_clusters + self.cfg.sram_banks + self.cfg.noc_routers, dtype=np.float32),
+            temperature_k=np.full(
+                self.cfg.mac_clusters + self.cfg.sram_banks + self.cfg.noc_routers,
+                self.cfg.ambient_temperature_k,
+                dtype=np.float32,
+            ),
         )
 
 

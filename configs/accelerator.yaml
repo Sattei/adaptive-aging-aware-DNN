@@ -26,6 +26,13 @@ accelerator:
   clock_ghz: 1.0
   voltage_v: 0.8
   supply_voltage: 0.8
+  temperature_k: 373.0  # legacy constant fallback only
+
+  # Stage-2C compact thermal model. These are modeling assumptions until calibrated.
+  ambient_temperature_k: 318.15
+  thermal_package_rth_k_per_w: 1.5
+  thermal_local_rth_k_per_w: 60.0
+  max_temperature_k: 398.15
 
   # Energy model aliases kept for backward compatibility.
   mac_energy_pj: 0.25

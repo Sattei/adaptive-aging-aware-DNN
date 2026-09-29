@@ -51,12 +51,34 @@ def normalize_mapping(mapping: Any, num_layers: int, num_clusters: int) -> np.nd
     return np.clip(mapping_arr[:num_layers], 0, num_clusters - 1).astype(np.int32)
 
 
-def activity_dict_from_result(result: Any) -> dict[str, np.ndarray]:
+def activity_dict_from_result(
+    result: Any,
+    accelerator_cfg: Any | None = None,
+) -> dict[str, np.ndarray]:
+    switching_activity = np.asarray(result.switching_activity, dtype=np.float32)
+    num_nodes = switching_activity.shape[0]
+
+    voltage_v = float(
+        cfg_get(
+            accelerator_cfg,
+            "voltage_v",
+            cfg_get(accelerator_cfg, "supply_voltage", 0.8),
+        )
+    )
+    result_temperature_k = getattr(result, "temperature_k", None)
+    if isinstance(result_temperature_k, np.ndarray) and result_temperature_k.shape == (num_nodes,):
+        temperature_k = result_temperature_k.astype(np.float32)
+    else:
+        fallback_temperature_k = float(cfg_get(accelerator_cfg, "temperature_k", 373.0))
+        temperature_k = np.full(num_nodes, fallback_temperature_k, dtype=np.float32)
+
     return {
-        "switching_activity": np.asarray(result.switching_activity, dtype=np.float32),
+        "switching_activity": switching_activity,
         "mac_utilization": np.asarray(result.mac_utilization, dtype=np.float32),
         "sram_access_rate": np.asarray(result.sram_access_rate, dtype=np.float32),
         "noc_traffic": np.asarray(result.noc_traffic, dtype=np.float32),
+        "voltage": np.full(num_nodes, voltage_v, dtype=np.float32),
+        "temperature_k": temperature_k,
     }
 
 
@@ -183,7 +205,8 @@ def simulate_mapping(
 ) -> dict[str, Any]:
     mapping_arr = normalize_mapping(mapping, len(layers), _num_clusters_from_simulator(simulator))
     result = simulator.run_workload(list(layers), mapping_arr)
-    activity = activity_dict_from_result(result)
+    accelerator_cfg = getattr(simulator, "cfg", None)
+    activity = activity_dict_from_result(result, accelerator_cfg)
     node_features = build_node_features(feature_builder, result, workload_name, stress_time_s)
 
     aging_scores: np.ndarray | None = None
@@ -232,10 +255,12 @@ def compute_physics_ttf(
     failure_threshold: float = 0.8,
     max_time_s: float = MAX_TTF_TIME_S,
     n_iter: int = 30,
+    accelerator_cfg: Any | None = None,
 ) -> float:
     mapping_arr = normalize_mapping(mapping, len(layers), _num_clusters_from_simulator(simulator))
     result = simulator.run_workload(list(layers), mapping_arr)
-    activity = activity_dict_from_result(result)
+    stress_cfg = accelerator_cfg if accelerator_cfg is not None else getattr(simulator, "cfg", None)
+    activity = activity_dict_from_result(result, stress_cfg)
 
     lo = 0.0
     hi = float(max_time_s)

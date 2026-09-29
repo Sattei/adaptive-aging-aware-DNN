@@ -27,7 +27,10 @@ class AgingDataset(InMemoryDataset):
       edge_index     : graph edges   [2, E]   long
       edge_attr      : edge features [E, 2]   float32
       y              : aging score   [N, 1]   float32
+      y_mechanisms   : [NBTI,HCI,TDDB] [N, 3] float32
+      x_history      : past node features [N, T, 8] float32
       y_trajectory   : future aging  [N, k]   float32
+      y_mechanism_trajectory : future mechanisms [N, k, 3] float32
       workload_emb   : one-hot       [5]      float32
       latency        : scalar        [1]      float32
       energy         : scalar        [1]      float32
@@ -37,6 +40,11 @@ class AgingDataset(InMemoryDataset):
         "ResNet-50", "MobileNetV2", "EfficientNet-B4", "BERT-Base", "ViT-B/16"
     ]
     FEATURE_DIM = 8
+    FEATURE_SCHEMA_VERSION = 3
+    LABEL_SCHEMA_VERSION = 8
+    # Four real simulator intervals provide a compact causal context while
+    # preserving the existing ten-step prediction horizon by default.
+    HISTORY_LENGTH = 4
     HORIZON = 10
     SECONDS_PER_STEP = 3600.0
     DEFAULT_CFG = {
@@ -48,15 +56,32 @@ class AgingDataset(InMemoryDataset):
             "sram_banks": 8,
             "noc_routers": 4,
             "num_layers": 10,
+            "voltage_v": 0.8,
+            "supply_voltage": 0.8,
+            "temperature_k": 373.0,
+            "ambient_temperature_k": 318.15,
+            "thermal_package_rth_k_per_w": 1.5,
+            "thermal_local_rth_k_per_w": 60.0,
+            "max_temperature_k": 398.15,
         },
         "workloads": [],
         "aging": {
+            "voltage_ref_v": 0.8,
+            "temperature_ref_k": 373.0,
             "nbti_A": 0.005,
             "nbti_n": 0.25,
+            "nbti_voltage_exp": 4.0,
+            "nbti_ea_ev": 0.15,
             "hci_B": 0.0001,
             "hci_m": 0.5,
-            "tddb_k": 2.5,
-            "tddb_beta": 10.0,
+            "hci_time_exp": 0.5,
+            "hci_voltage_exp": 3.0,
+            "hci_ea_ev": 0.10,
+            "tddb_field_gamma": 2.5,
+            "tddb_weibull_beta": 2.0,
+            "tddb_eta_ref_s": 5_000_000.0,
+            "tddb_field_ref": 0.8,
+            "tddb_ea_ev": 0.30,
         },
         "planning": {
             "failure_threshold": 0.8,
@@ -100,7 +125,11 @@ class AgingDataset(InMemoryDataset):
     @property
     def processed_file_names(self) -> List[str]:
         n_mac = int(self._acc_cfg.get("mac_clusters", self._acc_cfg.get("num_mac_clusters", 64)))
-        return [f"aging_{self.split}_{self.size}_mac{n_mac}_feat{self.FEATURE_DIM}.pt"]
+        return [
+            f"aging_{self.split}_{self.size}_mac{n_mac}_"
+            f"feat{self.FEATURE_DIM}_fv{self.FEATURE_SCHEMA_VERSION}_"
+            f"labels_v{self.LABEL_SCHEMA_VERSION}.pt"
+        ]
 
     def download(self) -> None:
         pass  # Synthetic dataset — no download needed
@@ -137,66 +166,93 @@ class AgingDataset(InMemoryDataset):
         data_list: List[Data] = []
         logger.info(f"Generating {self.size} samples [{self.split}]...")
 
+        num_macs = int(self._acc_cfg.get("mac_clusters", self._acc_cfg.get("num_mac_clusters", 64)))
+        voltage_v = float(self._acc_cfg.get("voltage_v", self._acc_cfg.get("supply_voltage", 0.8)))
+
         for idx in tqdm(range(self.size), desc=f"AgingDataset[{self.split}]"):
-            # --- Select workload ---
-            wl_name = self.WORKLOAD_LIST[int(rng.integers(0, len(self.WORKLOAD_LIST)))]
-            wl_idx = self.WORKLOAD_LIST.index(wl_name)
-            layers = workload_runner.get_workload_layers(wl_name)
-            n_layers = len(layers)
+            # Initial age is applied once as raw preconditioning, never as a
+            # delta time.  Subsequent state updates use SECONDS_PER_STEP only.
+            initial_age_s = float(rng.uniform(3600, 1_800_000))
+            workload_start = int(rng.integers(0, len(self.WORKLOAD_LIST)))
+            state = None
+            history_features: list[torch.Tensor] = []
+            history_temperatures: list[np.ndarray] = []
+            future_mechanisms: list[np.ndarray] = []
+            future_composites: list[np.ndarray] = []
+            cutoff_result = cutoff_mapping = cutoff_mechanisms = None
+            cutoff_workload = ""
 
-            # --- Random mapping ---
-            mapping = rng.integers(
-                0, int(self._acc_cfg.get("mac_clusters", self._acc_cfg.get("num_mac_clusters", 64))), size=n_layers
-            ).astype(np.int32)
+            # A seeded cycle through the existing workload pool guarantees
+            # temporal variation without inventing a separate scheduler.
+            for step in range(self.HISTORY_LENGTH + self.horizon):
+                wl_idx = (workload_start + step) % len(self.WORKLOAD_LIST)
+                wl_name = self.WORKLOAD_LIST[wl_idx]
+                layers = workload_runner.get_workload_layers(wl_name)
+                mapping = rng.integers(0, max(num_macs, 1), size=len(layers)).astype(np.int32)
+                result = simulator.run_workload(layers, mapping)
 
-            # --- Simulate ---
-            result = simulator.run_workload(layers, mapping)
-            activity = {
-                "switching_activity": result.switching_activity,
-                "mac_utilization":    result.mac_utilization,
-                "sram_access_rate":   result.sram_access_rate,
-                "noc_traffic":        result.noc_traffic,
-            }
+                temperature_k = np.asarray(result.temperature_k, dtype=np.float32)
+                if temperature_k.shape != (num_nodes,):
+                    raise ValueError(
+                        f"simulator temperature_k must have shape ({num_nodes},), "
+                        f"got {temperature_k.shape}"
+                    )
+                activity = {
+                    "switching_activity": result.switching_activity,
+                    "mac_utilization": result.mac_utilization,
+                    "sram_access_rate": result.sram_access_rate,
+                    "noc_traffic": result.noc_traffic,
+                    "voltage": np.full(num_nodes, voltage_v, dtype=np.float32),
+                    "temperature_k": temperature_k,
+                }
 
-            # Vary stress time: 1 hour to 500 hours.
-            stress_time = float(rng.uniform(3600, 1_800_000))
+                if state is None:
+                    state = aging_gen.compute_raw_state(activity, initial_age_s)
 
-            # --- Node features [N, 8] ---
-            node_features = feature_builder.build_node_features(
-                activity_dict=activity,
-                workload_name=wl_name,
-                latency=result.total_latency_cycles,
-                energy=result.total_energy_pj,
-                stress_time_s=stress_time,
+                # The feature age represents the device age at this interval's
+                # endpoint, matching the persistent state after this update.
+                elapsed_age_s = initial_age_s + (step + 1) * self.SECONDS_PER_STEP
+                node_features = feature_builder.build_node_features(
+                    activity_dict=activity,
+                    workload_name=wl_name,
+                    latency=result.total_latency_cycles,
+                    energy=result.total_energy_pj,
+                    stress_time_s=elapsed_age_s,
+                )
+                state = aging_gen.step_state(state, activity, self.SECONDS_PER_STEP)
+                mechanisms = aging_gen.state_to_mechanisms(state)
+
+                if step < self.HISTORY_LENGTH:
+                    history_features.append(node_features)
+                    history_temperatures.append(temperature_k)
+                    if step == self.HISTORY_LENGTH - 1:
+                        cutoff_result = result
+                        cutoff_mapping = mapping
+                        cutoff_mechanisms = mechanisms
+                        cutoff_workload = wl_name
+                else:
+                    future_mechanisms.append(mechanisms)
+                    future_composites.append(aging_gen.combine_mechanisms(mechanisms))
+
+            assert cutoff_result is not None and cutoff_mapping is not None and cutoff_mechanisms is not None
+            x_history = torch.stack(history_features, dim=1)  # [N, T, 8]
+            node_features = x_history[:, -1, :]
+            temperature_history_k = torch.tensor(
+                np.stack(history_temperatures, axis=1), dtype=torch.float32
             )
-
-            # --- Current aging score [N] ---
-            aging_score = aging_gen.compute_aging_score(
-                activity, stress_time
-            )
-
-            # --- Future trajectory [N, HORIZON] ---
-            future_acts = []
-            for h in range(self.horizon):
-                noise = rng.normal(0, 0.01, size=result.switching_activity.shape)
-                future_act = float(h + 1) / self.horizon
-                future_acts.append({
-                    "switching_activity": np.clip(
-                        result.switching_activity * (1.0 + future_act * 0.2) + noise,
-                        0.0, 1.0
-                    ).astype(np.float32),
-                    "mac_utilization":    result.mac_utilization,
-                    "sram_access_rate":   result.sram_access_rate,
-                    "noc_traffic":        result.noc_traffic,
-                })
-            trajectory = aging_gen.generate_trajectory_labels(
-                future_acts, stress_time
-            )  # [HORIZON, N]
-
-            # Transpose: [HORIZON, N] → [N, HORIZON]
+            mechanisms = cutoff_mechanisms
+            aging_score = aging_gen.combine_mechanisms(mechanisms)
+            y_mechanism_trajectory = torch.tensor(
+                np.stack(future_mechanisms, axis=1), dtype=torch.float32
+            )  # [N, H, 3]
             y_trajectory = torch.tensor(
-                trajectory.T, dtype=torch.float32
-            )  # [N, HORIZON]
+                np.stack(future_composites, axis=1), dtype=torch.float32
+            )  # [N, H]
+            result = cutoff_result
+            mapping = cutoff_mapping
+            wl_name = cutoff_workload
+            wl_idx = self.WORKLOAD_LIST.index(wl_name)
+            stress_time = initial_age_s + self.HISTORY_LENGTH * self.SECONDS_PER_STEP
 
             # --- Build PyG graph (edge_index must be [2, E] long) ---
             pyg_data = acc_graph.to_pyg(node_features)
@@ -217,7 +273,6 @@ class AgingDataset(InMemoryDataset):
             # --- Mapping vector (capped at 64 entries) ---
             max_map_len = 64
             map_arr = mapping[:max_map_len].astype(np.float32)
-            num_macs = int(self._acc_cfg.get("mac_clusters", self._acc_cfg.get("num_mac_clusters", 64)))
             map_arr = map_arr / max(num_macs - 1, 1)
             if len(map_arr) < max_map_len:
                 map_arr = np.pad(map_arr, (0, max_map_len - len(map_arr)))
@@ -225,12 +280,18 @@ class AgingDataset(InMemoryDataset):
 
             data = Data(
                 x=pyg_data.x,                          # [N, 8]
+                x_history=x_history,                   # [N, HISTORY_LENGTH, 8]
+                temperature_history_k=temperature_history_k,  # [N, HISTORY_LENGTH]
                 edge_index=pyg_data.edge_index,        # [2, E] long
                 edge_attr=pyg_data.edge_attr,          # [E, 2]
                 y=torch.tensor(
                     aging_score, dtype=torch.float32
                 ).unsqueeze(1),                        # [N, 1]
+                y_mechanisms=torch.tensor(
+                    mechanisms, dtype=torch.float32
+                ),                                     # [N, 3]
                 y_trajectory=y_trajectory,             # [N, HORIZON]
+                y_mechanism_trajectory=y_mechanism_trajectory,  # [N, HORIZON, 3]
                 workload_emb=wl_emb,                   # [5]
                 mapping=mapping_tensor,                # [64]
                 stress_time=torch.tensor([stress_time], dtype=torch.float32),

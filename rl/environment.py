@@ -104,6 +104,7 @@ class AgingControlEnv(gym.Env):
         self.current_stress_time_s = self.reference_stress_time_s
         self._mapping_int = np.zeros(self.L, dtype=np.int32)
         self.current_mapping = np.zeros(self.L, dtype=np.float32)
+        self.mechanism_state = self.ag.initialize_state(self.N)
         self.aging_vector = np.zeros(self.N, dtype=np.float32)
         self.predicted_trajectory = np.zeros((self.N, self.k_horizon), dtype=np.float32)
 
@@ -179,10 +180,14 @@ class AgingControlEnv(gym.Env):
             device=self.device,
         )
 
-        aging_scores = np.asarray(metrics["aging_scores"], dtype=np.float32)
         if monotonic:
-            aging_scores = np.maximum(self.aging_vector, aging_scores)
-        self.aging_vector = aging_scores
+            self.mechanism_state = self.ag.step_state(
+                self.mechanism_state,
+                metrics["activity"],
+                self.time_step_s,
+            )
+        mechanisms = self.ag.state_to_mechanisms(self.mechanism_state)
+        self.aging_vector = self.ag.combine_mechanisms(mechanisms).astype(np.float32)
 
         trajectory = metrics["trajectory_scores"]
         if trajectory is None:
@@ -305,7 +310,10 @@ class AgingControlEnv(gym.Env):
         self.current_stress_time_s = self.reference_stress_time_s
         self._mapping_int[:] = 0
         self.current_mapping = self._mapping_to_obs()
-        self.aging_vector = np.zeros(self.N, dtype=np.float32)
+        self.mechanism_state = self.ag.initialize_state(self.N)
+        self.aging_vector = self.ag.combine_mechanisms(
+            self.ag.state_to_mechanisms(self.mechanism_state)
+        ).astype(np.float32)
         self.predicted_trajectory = np.zeros((self.N, self.k_horizon), dtype=np.float32)
         self._current_metrics = None
 

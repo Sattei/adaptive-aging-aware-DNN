@@ -38,19 +38,37 @@ class ActivityExtractor:
         # Routers
         noc_activity = sim_data.avg_noc_traffic if hasattr(sim_data, 'avg_noc_traffic') else np.zeros(self.num_routers)
         
-        # Temperature Proxy (proxying switching power logic)
-        # Simplified: Base + scalar * activity
-        mac_temp = 30.0 + (50.0 * mac_util)
-        sram_temp = 35.0 + (30.0 * sram_access)
-        noc_temp = 30.0 + (25.0 * noc_activity)
+        # Prefer the simulator's Stage-2C thermal state.
+        n_nodes = self.num_clusters + self.num_banks + self.num_routers
+        sim_temp_k = getattr(sim_data, "temperature_k", None)
+        if isinstance(sim_temp_k, np.ndarray) and sim_temp_k.shape == (n_nodes,):
+            temperature_k = sim_temp_k.astype(np.float32)
+        else:
+            # Compatibility fallback for older SimResult objects.
+            mac_temp_c = 30.0 + (50.0 * mac_util)
+            sram_temp_c = 35.0 + (30.0 * sram_access)
+            noc_temp_c = 30.0 + (25.0 * noc_activity)
+            temperature_k = (
+                np.concatenate([mac_temp_c, sram_temp_c, noc_temp_c]) + 273.15
+            ).astype(np.float32)
+
+        mac_temp_k = temperature_k[:self.num_clusters]
+        sram_temp_k = temperature_k[
+            self.num_clusters:self.num_clusters + self.num_banks
+        ]
+        noc_temp_k = temperature_k[self.num_clusters + self.num_banks:]
         
         return {
             "mac_switching": sw_act[:self.num_clusters],
             "mac_utilization": mac_util,
-            "mac_temperature": mac_temp,
+            "mac_temperature": mac_temp_k - 273.15,
+            "mac_temperature_k": mac_temp_k,
             "sram_access": sram_access,
-            "sram_temperature": sram_temp,
+            "sram_temperature": sram_temp_k - 273.15,
+            "sram_temperature_k": sram_temp_k,
             "noc_activity": noc_activity,
-            "noc_temperature": noc_temp,
+            "noc_temperature": noc_temp_k - 273.15,
+            "noc_temperature_k": noc_temp_k,
+            "global_temperature_k": temperature_k,
             "global_switching": sw_act
         }

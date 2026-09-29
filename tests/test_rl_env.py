@@ -31,6 +31,9 @@ def test_gym_environment():
     # 1. Test Reset
     obs, info = env.reset(seed=42)
     assert isinstance(obs, np.ndarray)
+    assert env.mechanism_state.shape == (8, 3)
+    assert env.mechanism_state.dtype == np.float64
+    assert np.all(env.mechanism_state == 0.0)
     
     # Expected N = 4 + 2 + 2 = 8
     # obs dim: 8 + (8*5) + 16 + 10 + 1 + 8 = 83
@@ -46,3 +49,11 @@ def test_gym_environment():
     assert isinstance(terminated, bool)
     assert isinstance(truncated, bool)
     assert isinstance(info, dict)
+    first_state = env.mechanism_state.copy()
+    assert np.all(first_state >= 0.0)
+
+    env.step(env.action_space.sample())
+    assert np.all(env.mechanism_state >= first_state)
+
+    env.reset(seed=7)
+    assert np.all(env.mechanism_state == 0.0)

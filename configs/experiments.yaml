@@ -32,12 +32,25 @@ planning:
   tddb: 0.25
 
 aging:
+  voltage_ref_v: 0.8
+  temperature_ref_k: 373.0
+
   nbti_A: 0.005
   nbti_n: 0.25
+  nbti_voltage_exp: 4.0
+  nbti_ea_ev: 0.15
+
   hci_B: 0.0001
   hci_m: 0.5
-  tddb_k: 2.5
-  tddb_beta: 10.0
+  hci_time_exp: 0.5
+  hci_voltage_exp: 3.0
+  hci_ea_ev: 0.10
+
+  tddb_field_gamma: 2.5
+  tddb_weibull_beta: 2.0
+  tddb_eta_ref_s: 5000000.0
+  tddb_field_ref: 0.8
+  tddb_ea_ev: 0.30
 
 reward:
   latency_threshold: 1.10

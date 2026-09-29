@@ -10,7 +10,7 @@ import numpy as np
 
 from aging_models.aging_label_generator import AgingLabelGenerator
 from simulator.workload_runner import WorkloadRunner
-from utils.runtime_eval import REFERENCE_STRESS_TIME_S, cfg_get, compute_physics_ttf, normalize_mapping
+from utils.runtime_eval import REFERENCE_STRESS_TIME_S, activity_dict_from_result, cfg_get, compute_physics_ttf, normalize_mapping
 
 
 @dataclass
@@ -62,15 +62,14 @@ def _evaluate_mapping(
     layers: list[dict[str, Any]],
     mapping: np.ndarray,
     failure_threshold: float,
+    accelerator_cfg: Any | None = None,
 ) -> dict[str, float]:
     mapping = normalize_mapping(mapping, len(layers), getattr(simulator, "num_mac_clusters", 1))
     result = simulator.run_workload(layers, mapping)
-    activity = {
-        "switching_activity": result.switching_activity,
-        "mac_utilization": result.mac_utilization,
-        "sram_access_rate": result.sram_access_rate,
-        "noc_traffic": result.noc_traffic,
-    }
+    activity = activity_dict_from_result(
+        result,
+        accelerator_cfg if accelerator_cfg is not None else getattr(simulator, "cfg", None),
+    )
     aging_scores = aging_gen.compute_aging_score(activity, REFERENCE_STRESS_TIME_S)
     ttf_years = compute_physics_ttf(
         simulator=simulator,
@@ -78,6 +77,7 @@ def _evaluate_mapping(
         layers=layers,
         mapping=mapping,
         failure_threshold=failure_threshold,
+        accelerator_cfg=accelerator_cfg,
     )
     return {
         "peak_aging": float(np.max(aging_scores)),
@@ -120,7 +120,15 @@ def _run_mapping_strategy(
     for workload_name in workloads:
         layers = runner.get_workload_layers(workload_name)
         mapping = mapping_builder(workload_name, layers)
-        results[workload_name] = _evaluate_mapping(simulator, aging_gen, workload_name, layers, mapping, failure_threshold)
+        results[workload_name] = _evaluate_mapping(
+            simulator,
+            aging_gen,
+            workload_name,
+            layers,
+            mapping,
+            failure_threshold,
+            accelerator_cfg=cfg_get(cfg, "accelerator", {}),
+        )
 
     return _aggregate_result(name, results)
 
@@ -186,7 +194,15 @@ def run_simulated_annealing(simulator, graph, workload_stream, cfg) -> BaselineR
     for workload_name in workloads:
         layers = runner.get_workload_layers(workload_name)
         current = rng.integers(0, num_clusters, size=len(layers), endpoint=False, dtype=np.int32)
-        current_metrics = _evaluate_mapping(simulator, aging_gen, workload_name, layers, current, failure_threshold)
+        current_metrics = _evaluate_mapping(
+            simulator,
+            aging_gen,
+            workload_name,
+            layers,
+            current,
+            failure_threshold,
+            accelerator_cfg=cfg_get(cfg, "accelerator", {}),
+        )
         best_mapping = current.copy()
         best_metrics = dict(current_metrics)
 
@@ -199,7 +215,15 @@ def run_simulated_annealing(simulator, graph, workload_stream, cfg) -> BaselineR
                 layer_idx = int(rng.integers(0, len(proposal)))
                 proposal[layer_idx] = int(rng.integers(0, num_clusters))
 
-            proposal_metrics = _evaluate_mapping(simulator, aging_gen, workload_name, layers, proposal, failure_threshold)
+            proposal_metrics = _evaluate_mapping(
+                simulator,
+                aging_gen,
+                workload_name,
+                layers,
+                proposal,
+                failure_threshold,
+                accelerator_cfg=cfg_get(cfg, "accelerator", {}),
+            )
             delta = proposal_metrics["peak_aging"] - current_metrics["peak_aging"]
 
             accept = delta <= 0.0 or rng.random() < math.exp(-delta / max(temperature, 1e-6))
