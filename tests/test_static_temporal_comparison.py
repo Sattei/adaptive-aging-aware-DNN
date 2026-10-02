@@ -84,7 +84,19 @@ class _FakePipeline:
         type(self).calls.append(self)
 
     def train(self):
-        return _metrics(0.08 if self.model.uses_x_history else 0.10)
+        mae = 0.08 if self.model.uses_x_history else 0.10
+        self.training_summary = {
+            "epochs_requested": 2,
+            "epochs_completed": 2,
+            "best_epoch": 1,
+            "best_val_loss": mae * mae,
+            "stopped_early": False,
+            "training_seconds": 0.0,
+            "evaluation_seconds": 0.0,
+            "peak_cuda_memory_bytes": None,
+            "history": [{"epoch": 1, "val_loss": mae * mae}],
+        }
+        return _metrics(mae)
 
 
 def test_comparison_uses_one_dataset_and_identical_split_membership(tmp_path):
@@ -117,6 +129,9 @@ def test_comparison_result_schema_reports_metrics_parameters_and_distinct_checkp
         assert results[arm]["test_metrics"]["trajectory_metrics"]["per_horizon"]
     assert results["static"]["checkpoints"] != results["temporal"]["checkpoints"]
     assert results["comparison"]["convention"] == "temporal_minus_static"
+    assert results["static"]["training"]["history"] != results["temporal"]["training"]["history"]
+    assert results["static"]["training"]["training_seconds"] >= 0.0
+    assert results["temporal"]["training"]["evaluation_seconds"] >= 0.0
 
 
 def test_metric_delta_uses_temporal_minus_static_sign_convention():

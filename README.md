@@ -154,6 +154,86 @@ pytest tests/ -q
 
 ---
 
+## Temporal mechanism-trajectory workflow
+
+The temporal dataset supplies four causal node-history frames and ten absolute
+future mechanism states per node:
+
+```text
+x_history:                [N, 4, 8]
+y_mechanism_trajectory:   [N, 10, 3]  # (NBTI, HCI, TDDB)
+```
+
+`TemporalMechanismTrajectoryGNN` applies the shared spatial
+GCN/GAT/Transformer encoder to each chronological frame, processes the
+resulting node sequence with a GRU, and directly predicts `[N, 10, 3]`.
+`CurrentMechanismTrajectoryGNN` is the matched static control: it receives
+only the cutoff feature matrix `x = x_history[:, -1, :]`.
+
+### Recommended commands
+
+Run these from the repository root. The temporal commands use the unchanged
+28-node reference topology, FP32 CUDA, dataset seed 42, and batch size 32.
+
+```bash
+# Validate code and the temporal/refinement tests.
+python -m pytest -q
+
+# Audit target variation, saturation, and future-state increments.
+python scripts/audit_temporal_targets.py \
+  --dataset-size 512 --seed 42 \
+  --output-dir outputs/refinement/target_audit
+
+# Reference static-versus-temporal comparison.
+python scripts/compare_static_temporal.py \
+  --device cuda:0 --seed 42 --dataset-size 512 \
+  --epochs 50 --batch-size 32 \
+  --output-dir outputs/refinement/reference_512_seed42
+
+# Causal history-window ablation (latest 1, 2, or all 4 frames).
+python scripts/run_temporal_history_ablation.py \
+  --device cuda:0 --dataset-size 512 --seed 42 \
+  --epochs 50 --batch-size 32 --history-lengths 1 2 4 \
+  --output-dir outputs/refinement/history_ablation
+
+# Small validation-only temporal learning-rate sweep.
+python scripts/run_temporal_learning_rate_sweep.py \
+  --device cuda:0 --dataset-size 512 --seed 42 \
+  --epochs 50 --batch-size 32 --learning-rates 1e-4 3e-4 1e-3 \
+  --output-dir outputs/refinement/learning_rate
+
+# Stability of one selected temporal configuration with a fixed data split.
+python scripts/run_temporal_multiseed.py \
+  --device cuda:0 --dataset-seed 42 --split-seed 42 \
+  --seeds 42 123 2026 --dataset-size 512 --epochs 50 --batch-size 32 \
+  --learning-rate 1e-3 --history-length 4 \
+  --output-dir outputs/refinement/multiseed
+```
+
+### Final fair static-versus-temporal validation
+
+This is the command to run before node-scaling work. It evaluates both model
+families over the same three learning rates and initialization seeds, selects
+each family only by mean validation loss, then reports selected-model test
+metrics, CUDA cost, split/dataset fingerprints, and temporal history-order
+diagnostics.
+
+```bash
+python scripts/run_final_temporal_validation.py \
+  --dataset-size 512 --dataset-seed 42 --split-seed 42 \
+  --seeds 42 123 2026 --learning-rates 1e-4 3e-4 1e-3 \
+  --epochs 50 --batch-size 32 --device cuda:0 \
+  --output-dir outputs/final_temporal_validation
+```
+
+It creates `final_validation.json`, `final_validation_summary.txt`, separate
+static/temporal LR sweep files, history sensitivity metrics, and per-run
+checkpoints under `outputs/final_temporal_validation/`. TDDB R² is retained
+for transparency but should not be used as a primary decision metric because
+the normalized TDDB targets have very low variance.
+
+---
+
 ## Repository layout
 
 ```

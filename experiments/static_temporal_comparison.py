@@ -89,6 +89,29 @@ def split_metadata(membership: dict[str, list[int]]) -> dict[str, Any]:
     }
 
 
+def training_metadata(pipeline: Any) -> dict[str, Any]:
+    """Return optional observability metadata without constraining custom pipelines."""
+    summary = getattr(pipeline, "training_summary", {})
+    return dict(summary) if summary is not None else {}
+
+
+def print_training_summary(label: str, summary: dict[str, Any]) -> None:
+    """Print the compact end-of-training comparison summary."""
+    if not summary:
+        return
+
+    peak_bytes = summary.get("peak_cuda_memory_bytes")
+    peak_text = "not applicable" if peak_bytes is None else f"{peak_bytes / (1024 ** 2):.1f} MiB"
+    print(
+        f"{label}:\n"
+        f"  best epoch: {summary.get('best_epoch')}\n"
+        f"  best validation loss: {summary.get('best_val_loss')}\n"
+        f"  training time: {summary.get('training_seconds', 0.0):.2f}s\n"
+        f"  test evaluation time: {summary.get('evaluation_seconds', 0.0):.2f}s\n"
+        f"  peak GPU memory: {peak_text}"
+    )
+
+
 def checkpoint_paths(
     checkpoint_dir: Path,
     static_model: CurrentMechanismTrajectoryGNN,
@@ -158,8 +181,12 @@ def run_static_temporal_comparison(
     paths = checkpoint_paths(checkpoint_dir, static_model, temporal_model)
     set_experiment_seed(seed)
     static_metrics = static_pipeline.train()
+    static_training = training_metadata(static_pipeline)
+    print_training_summary("Static", static_training)
     set_experiment_seed(seed)
     temporal_metrics = temporal_pipeline.train()
+    temporal_training = training_metadata(temporal_pipeline)
+    print_training_summary("Temporal", temporal_training)
 
     model_cfg = _cfg_get(config, "model", {})
     training_cfg = _cfg_get(config, "training", {})
@@ -169,12 +196,14 @@ def run_static_temporal_comparison(
             "parameter_count": count_trainable_parameters(static_model),
             "test_metrics": static_metrics,
             "checkpoints": {name: str(path) for name, path in paths["static"].items()},
+            "training": static_training,
         },
         "temporal": {
             "model_name": type(temporal_model).__name__,
             "parameter_count": count_trainable_parameters(temporal_model),
             "test_metrics": temporal_metrics,
             "checkpoints": {name: str(path) for name, path in paths["temporal"].items()},
+            "training": temporal_training,
         },
         "comparison": compute_metric_deltas(static_metrics, temporal_metrics),
         "experiment": {

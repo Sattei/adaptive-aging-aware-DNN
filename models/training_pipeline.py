@@ -5,6 +5,7 @@ from torch_geometric.loader import DataLoader
 import wandb
 import numpy as np
 import logging
+import time
 from pathlib import Path
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from omegaconf import DictConfig
@@ -105,6 +106,10 @@ class TrainingPipeline:
         default_prefix = 'trajectory_' if self.is_trajectory else 'predictor_'
         self.target_name = getattr(self.model, 'target_name', default_target_name)
         self.checkpoint_prefix = getattr(self.model, 'checkpoint_prefix', default_prefix)
+        # Kept separate from ``train()``'s return value so existing callers that
+        # expect only test metrics remain compatible.
+        self.training_history = []
+        self.training_summary = {}
 
     def _forward_batch(self, batch):
         if self.uses_x_history:
@@ -128,8 +133,18 @@ class TrainingPipeline:
             
     def train(self) -> dict:
         # For trajectory: monitor R² (higher=better). For predictor: monitor loss (lower=better).
-        best_val_loss = float('-inf') if self.is_trajectory else float('inf')
+        # This intentionally preserves the pre-existing checkpoint criterion.
+        best_monitor_value = float('-inf') if self.is_trajectory else float('inf')
+        best_epoch = None
+        best_validation_loss = None
         patience_counter = 0
+        stopped_early = False
+        self.training_history = []
+
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+            torch.cuda.reset_peak_memory_stats(self.device)
+        training_start = time.perf_counter()
         
         checkpoint_dir = self._checkpoint_dir if self._checkpoint_dir else Path("checkpoints")
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -142,6 +157,7 @@ class TrainingPipeline:
             # Training Phase
             self.model.train()
             train_loss = 0.0
+            learning_rate = float(self.optimizer.param_groups[0]['lr'])
             
             for batch in self.train_loader:
                 batch = batch.to(self.device, non_blocking=self.non_blocking)
@@ -164,6 +180,15 @@ class TrainingPipeline:
             # Validation Phase
             val_metrics = self.evaluate(split='val')
             val_loss = val_metrics['loss']
+            self.training_history.append({
+                'epoch': epoch + 1,
+                'train_loss': float(train_loss),
+                'val_loss': float(val_loss),
+                'val_mae': float(val_metrics['mae']),
+                'val_rmse': float(val_metrics['rmse']),
+                'val_r2': float(val_metrics['r2']),
+                'learning_rate': learning_rate,
+            })
             
             if wandb.run is not None:
                 try:
@@ -181,13 +206,15 @@ class TrainingPipeline:
             monitor_r2 = self.is_trajectory
             if monitor_r2:
                 metric_val = val_metrics['r2']
-                improved = metric_val > best_val_loss  # best_val_loss reused as best_r2
+                improved = metric_val > best_monitor_value
             else:
                 metric_val = val_loss
-                improved = metric_val < best_val_loss
+                improved = metric_val < best_monitor_value
 
             if improved:
-                best_val_loss = metric_val
+                best_monitor_value = float(metric_val)
+                best_epoch = epoch + 1
+                best_validation_loss = float(val_loss)
                 patience_counter = 0
                 torch.save(self.model.state_dict(), best_path)
             else:
@@ -195,14 +222,49 @@ class TrainingPipeline:
                 
             if patience_counter >= self.patience:
                 print(f"Early stopping at epoch {epoch}")
+                stopped_early = True
                 break
+
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        training_seconds = time.perf_counter() - training_start
+        peak_cuda_memory_bytes = (
+            int(torch.cuda.max_memory_allocated(self.device))
+            if self.device.type == "cuda"
+            else None
+        )
                 
         # Save last
         torch.save(self.model.state_dict(), last_path)
         
         # Load best for final test eval
         self.load_checkpoint(best_path)
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        evaluation_start = time.perf_counter()
         test_metrics = self.evaluate(split='test')
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        evaluation_seconds = time.perf_counter() - evaluation_start
+
+        self.training_summary = {
+            'epochs_requested': int(self.epochs),
+            'epochs_completed': len(self.training_history),
+            'best_epoch': best_epoch,
+            'best_val_loss': best_validation_loss,
+            'best_monitor_name': 'r2' if self.is_trajectory else 'loss',
+            'best_monitor_value': best_monitor_value if best_epoch is not None else None,
+            'stopped_early': stopped_early,
+            'training_seconds': float(training_seconds),
+            'evaluation_seconds': float(evaluation_seconds),
+            'peak_cuda_memory_bytes': peak_cuda_memory_bytes,
+            'peak_cuda_memory_mb': (
+                float(peak_cuda_memory_bytes / (1024 ** 2))
+                if peak_cuda_memory_bytes is not None
+                else None
+            ),
+            'history': list(self.training_history),
+        }
         
         return test_metrics
         
